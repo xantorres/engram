@@ -1,0 +1,4 @@
+# Add to ~/.codex/config.toml (or a project .codex/config.toml) to wire engram
+# into Codex. The server is launched on demand over stdio.
+[mcp_servers.engram]
+command = "engram-mcp"

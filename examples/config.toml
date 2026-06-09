@@ -1,0 +1,19 @@
+# Example engram configuration.
+# Copy to ~/.config/engram/config.toml and edit. Every value can also be set
+# with an environment variable (ENGRAM_STORE, ENGRAM_EXTRACTOR_URL, ...).
+
+[store]
+# Where memories are kept. Default: ~/.local/share/engram
+dir = "~/.local/share/engram"
+
+[extractor]
+# Any OpenAI-compatible endpoint. Local-first defaults shown.
+# LM Studio: http://localhost:1234/v1   Ollama: http://localhost:11434/v1
+base_url = "http://localhost:1234/v1"
+model = "local-model"
+# api_key = "only-needed-for-cloud-providers"
+
+[bridge]
+# When false (default), the promotion bridge is dry-run only: it reports what it
+# would do but writes nothing. Flip to true once you trust its routing.
+autopromote = false
