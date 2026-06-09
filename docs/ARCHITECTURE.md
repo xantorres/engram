@@ -58,6 +58,7 @@ renders a delimited memory block that can be refreshed in place inside an
 ## Surfaces (`cli/`, `mcp/`)
 
 The CLI and the FastMCP server are thin shells over the layers above. The MCP
-server exposes `remember`, `recall`, `search`, `review_queue`, `promote`, and
-`reject` as tools, plus `memory://recall` as a resource, so any MCP client
-shares one store.
+server exposes just `remember` and `recall` as tools, plus `memory://recall` as
+a resource, so any MCP client shares one store with a minimal context footprint.
+Review and promotion stay CLI-only, since approving a sensitive memory is a
+human action, not an agent's.

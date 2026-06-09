@@ -16,7 +16,7 @@ def test_tools_registered():
         async with Client(mcp) as client:
             return {t.name for t in await client.list_tools()}
 
-    assert {"remember", "recall", "search"} <= _run(run())
+    assert {"remember", "recall"} <= _run(run())
 
 
 def test_remember_then_recall_roundtrip(tmp_path, monkeypatch):

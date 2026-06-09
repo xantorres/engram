@@ -46,5 +46,16 @@ def to_dict(memory: Memory) -> dict:
     }
 
 
+_STOPWORDS = frozenset(
+    "the and for with you your has have are was were will would can could should"
+    " this that these those they them their what when where which who how why"
+    " about into from out off over under not but our please help need want".split()
+)
+
+
 def _tokens(text: str) -> set[str]:
-    return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) >= 3}
+    return {
+        w
+        for w in re.findall(r"[a-z0-9]+", text.lower())
+        if len(w) >= 3 and w not in _STOPWORDS
+    }
