@@ -39,6 +39,28 @@ def test_harvest_session_claude_code(tmp_path):
     assert store.get(staged[0].id).source == "harness:claude-code"
 
 
+def test_harvest_session_caps_input(tmp_path):
+    fixture = tmp_path / "big.jsonl"
+    fixture.write_text(
+        json.dumps({"message": {"role": "user", "content": "x" * 50000}}), encoding="utf-8"
+    )
+    captured = {}
+
+    class CapturingStub:
+        def complete(self, system, user):
+            captured["user"] = user
+            return '{"candidates":[]}'
+
+    harvest_session(
+        MarkdownStore(tmp_path / "store"),
+        fixture,
+        harness="claude-code",
+        extractor=CapturingStub(),
+        max_chars=1000,
+    )
+    assert len(captured["user"]) <= 1000
+
+
 def test_harvest_session_rejects_unknown_harness(tmp_path):
     fixture = tmp_path / "s.jsonl"
     fixture.write_text("{}", encoding="utf-8")

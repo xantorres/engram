@@ -31,11 +31,14 @@ def harvest_session(
     harness: str,
     extractor: SupportsComplete,
     min_confidence: float = 0.5,
+    max_chars: int = 12000,
 ) -> list[Memory]:
     reader = _READERS.get(harness)
     if reader is None:
         raise ValueError(f"unknown harness {harness!r}; expected one of {supported_harnesses()}")
     text = base.turns_to_text(reader(path))
+    if len(text) > max_chars:
+        text = text[-max_chars:]  # recent turns carry the most durable signal
     candidates = harvest(
         text, extractor, source=f"harness:{harness}", min_confidence=min_confidence
     )
