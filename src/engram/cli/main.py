@@ -207,6 +207,17 @@ def doctor() -> None:
             typer.echo(f"  {entry}")
 
 
+@app.command(name="import")
+def import_(directory: Path) -> None:
+    """Import memories from a directory of frontmatter-markdown files."""
+    from engram.capture.importer import import_markdown_dir
+
+    staged = import_markdown_dir(_store(), directory)
+    typer.echo(f"imported {len(staged)} memories from {directory}")
+    for mem in staged:
+        typer.echo(f"  {mem.id} [{mem.kind.value}] {mem.fact[:70]}")
+
+
 def main() -> None:
     app()
 
