@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "engram"
+version = "0.1.0"
+description = "Agent-agnostic memory layer: capture facts from any coding agent, review them, recall them everywhere."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Xan Torres" }]
+keywords = ["memory", "mcp", "agents", "llm", "knowledge-base"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "fastmcp>=2.3",
+    "pydantic>=2.6",
+    "httpx>=0.27",
+    "typer>=0.12",
+    "pyyaml>=6",
+]
+
+[project.scripts]
+engram = "engram.cli.main:main"
+engram-mcp = "engram.mcp.server:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/engram"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Option", "typer.Argument"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
