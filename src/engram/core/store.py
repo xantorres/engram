@@ -19,6 +19,7 @@ import re
 from pathlib import Path
 
 import yaml
+from pydantic import ValidationError
 
 from engram.core import atomic
 from engram.core.locking import store_lock
@@ -27,6 +28,10 @@ from engram.core.text import render_safe
 
 _FRONTMATTER = re.compile(r"^---\n(.*?)\n---\n?(.*)$", re.DOTALL)
 _LOG_HEADER = "# Memory log\n\nNewest first. Auto-captured, low-risk facts.\n\n"
+
+
+class StoreFormatError(RuntimeError):
+    """The registry exists but is unreadable; engram refuses to read or overwrite it."""
 
 
 class Store(abc.ABC):
@@ -88,9 +93,14 @@ class MarkdownStore(Store):
             return []
         match = _FRONTMATTER.match(self.registry.read_text(encoding="utf-8"))
         if not match:
-            return []
-        data = yaml.safe_load(match.group(1)) or {}
-        return [Memory.from_item(item) for item in data.get("items", [])]
+            raise StoreFormatError(f"{self.registry} is missing YAML frontmatter")
+        try:
+            data = yaml.safe_load(match.group(1)) or {}
+            if not isinstance(data, dict):
+                raise StoreFormatError(f"{self.registry} frontmatter is not a mapping")
+            return [Memory.from_item(item) for item in (data.get("items") or [])]
+        except (yaml.YAMLError, ValidationError) as e:
+            raise StoreFormatError(f"{self.registry} is malformed: {e}") from e
 
     def _save(self, memories: list[Memory]) -> dict:
         front = {
