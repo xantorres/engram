@@ -1,5 +1,8 @@
 import datetime as dt
 import json
+from unittest.mock import patch
+
+import pytest
 
 from engram.bridge import promote as bridge
 from engram.bridge import review
@@ -59,6 +62,16 @@ def test_apply_appends_low_risk(tmp_path):
     assert len(promoted) == 1
     assert promoted[0].dest == "memory-log.md"
     assert (tmp_path / "memory-log.md").exists()
+
+
+def test_append_rolls_back_log_when_registry_update_fails(tmp_path):
+    store = _store_with(tmp_path, Memory(fact="prefers pnpm", kind=Kind.tooling))
+    result = bridge.plan(store)
+    with patch.object(store, "update", side_effect=RuntimeError("registry boom")):
+        with pytest.raises(RuntimeError):
+            bridge.apply(store, result, autopromote=True, today=dt.date(2026, 6, 9))
+    log = tmp_path / "memory-log.md"
+    assert not (log.exists() and "prefers pnpm" in log.read_text())
 
 
 def test_apply_queues_curated(tmp_path):
