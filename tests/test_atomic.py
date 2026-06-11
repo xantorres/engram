@@ -41,4 +41,22 @@ def test_audit_record_written(tmp_path):
 
 
 def test_unknown_undo_token_is_safe(tmp_path):
-    assert restore_from_bak("nope", root=tmp_path)["ok"] is False
+    assert restore_from_bak("0123456789ab", root=tmp_path)["ok"] is False
+
+
+def test_restore_rejects_malformed_token(tmp_path):
+    assert restore_from_bak("../../etc/passwd", root=tmp_path)["ok"] is False
+
+
+def test_restore_refuses_path_outside_root(tmp_path):
+    from engram.core import atomic
+
+    atomic.secure_dir(atomic._bak_dir(tmp_path))
+    token = "abcdef012345"
+    outside = tmp_path.parent / "engram_escape.txt"
+    (atomic._bak_dir(tmp_path) / f"{token}.bak").write_text(
+        json.dumps({"path": str(outside), "content": "ESCAPED"}), encoding="utf-8"
+    )
+    res = restore_from_bak(token, root=tmp_path)
+    assert res["ok"] is False
+    assert not outside.exists()

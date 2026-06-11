@@ -10,11 +10,14 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import re
 import tempfile
 import uuid
 from pathlib import Path
 
 from engram.core.locking import store_lock
+
+_TOKEN_RE = re.compile(r"^[0-9a-f]{12}$")
 
 DIR_MODE = 0o700
 FILE_MODE = 0o600
@@ -101,13 +104,24 @@ def atomic_write(
 
 
 def restore_from_bak(token: str, *, root: str | Path) -> dict:
-    """Undo a write by token, deleting the file if the write had created it."""
+    """Undo a write by token, deleting the file if the write had created it.
+
+    The token must be a literal 12-hex handle and the recorded target must resolve
+    inside ``root``; a tampered backup can't redirect the write to an arbitrary path.
+    """
+    if not _TOKEN_RE.match(token):
+        return {"ok": False, "error": "invalid undo token"}
+    root = Path(root)
     with store_lock(root):
-        bak = _bak_dir(Path(root)) / f"{token}.bak"
+        bak = _bak_dir(root) / f"{token}.bak"
         if not bak.exists():
             return {"ok": False, "error": "unknown undo token"}
         record = json.loads(bak.read_text(encoding="utf-8"))
-        target = Path(record["path"])
+        target = Path(record["path"]).resolve()
+        try:
+            target.relative_to(root.resolve())
+        except ValueError:
+            return {"ok": False, "error": "refusing to restore outside store root"}
         if record["content"] is None:
             if target.exists():
                 target.unlink()
