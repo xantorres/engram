@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from engram.core.schema import Kind
@@ -32,6 +32,13 @@ def _check_str(value: object, name: str, *, optional: bool = False) -> str | Non
 def _check_bool(value: object, name: str) -> bool:
     if not isinstance(value, bool):
         raise ConfigError(f"{name} must be a boolean, got {type(value).__name__}")
+    return value
+
+
+def _check_int(value: object, name: str) -> int:
+    # bool is an int subclass; reject it so `archive = true` can't pass as a count.
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"{name} must be an integer, got {type(value).__name__}")
     return value
 
 
@@ -82,12 +89,89 @@ def _env_list(name: str, default: list[str] | None) -> list[str] | None:
     return items or None
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError as e:
+        raise ConfigError(f"{name} must be an integer, got {raw!r}") from e
+
+
+@dataclass
+class GcConfig:
+    """Retention windows for the self-maintaining store."""
+
+    bak_keep_days: int = 14
+    audit_max_bytes: int = 5_000_000
+    queue_done_keep_days: int = 30
+    archive: bool = True
+    stale_grace_days: int = 30
+
+
+@dataclass
+class RecallConfig:
+    """How recall materializes into the user's context files."""
+
+    auto_refresh: bool = False
+    refresh_targets: list[str] = field(default_factory=list)
+    limit: int = 30
+
+
+def _load_gc(data: dict) -> GcConfig:
+    section = data.get("gc", {})
+    return GcConfig(
+        bak_keep_days=_env_int(
+            "ENGRAM_GC_BAK_KEEP_DAYS",
+            _check_int(section.get("bak_keep_days", 14), "gc.bak_keep_days"),
+        ),
+        audit_max_bytes=_env_int(
+            "ENGRAM_GC_AUDIT_MAX_BYTES",
+            _check_int(section.get("audit_max_bytes", 5_000_000), "gc.audit_max_bytes"),
+        ),
+        queue_done_keep_days=_env_int(
+            "ENGRAM_GC_QUEUE_DONE_KEEP_DAYS",
+            _check_int(section.get("queue_done_keep_days", 30), "gc.queue_done_keep_days"),
+        ),
+        archive=_env_bool(
+            "ENGRAM_GC_ARCHIVE",
+            _check_bool(section.get("archive", True), "gc.archive"),
+        ),
+        stale_grace_days=_env_int(
+            "ENGRAM_GC_STALE_GRACE_DAYS",
+            _check_int(section.get("stale_grace_days", 30), "gc.stale_grace_days"),
+        ),
+    )
+
+
+def _load_recall(data: dict) -> RecallConfig:
+    section = data.get("recall", {})
+    toml_targets = section.get("refresh_targets")
+    if toml_targets is not None:
+        _check_str_list(toml_targets, "recall.refresh_targets")
+    targets = _env_list("ENGRAM_RECALL_REFRESH_TARGETS", toml_targets)
+    return RecallConfig(
+        auto_refresh=_env_bool(
+            "ENGRAM_RECALL_AUTO_REFRESH",
+            _check_bool(section.get("auto_refresh", False), "recall.auto_refresh"),
+        ),
+        refresh_targets=targets or [],
+        limit=_env_int(
+            "ENGRAM_RECALL_LIMIT",
+            _check_int(section.get("limit", 30), "recall.limit"),
+        ),
+    )
+
+
 @dataclass
 class Config:
     store_dir: Path
     extractor: ExtractorConfig
     autopromote: bool = False
     kind_allowlist: list[str] | None = None
+    gc: GcConfig = field(default_factory=GcConfig)
+    recall: RecallConfig = field(default_factory=RecallConfig)
 
 
 def load(path: str | Path | None = None) -> Config:
@@ -135,4 +219,6 @@ def load(path: str | Path | None = None) -> Config:
             _check_bool(bridge.get("autopromote", False), "bridge.autopromote"),
         ),
         kind_allowlist=kind_allowlist,
+        gc=_load_gc(data),
+        recall=_load_recall(data),
     )
