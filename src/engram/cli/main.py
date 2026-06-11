@@ -6,14 +6,17 @@ Commands are registered as each subsystem comes online. Capture verbs
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 import typer
 
 from engram import __version__
+from engram.config import ConfigError
 from engram.config import load as load_config
 from engram.core.schema import Kind, Status
-from engram.core.store import MarkdownStore
+from engram.core.store import MarkdownStore, StoreFormatError
 
 app = typer.Typer(
     name="engram",
@@ -47,7 +50,14 @@ def remember(
     """Stage a fact into memory (pending review)."""
     from engram.capture.active import remember as stage
 
-    mem = stage(_store(), fact, kind=Kind(kind), confidence=confidence)
+    try:
+        parsed_kind = Kind(kind)
+    except ValueError:
+        valid = ", ".join(k.value for k in Kind)
+        typer.echo(f"unknown kind {kind!r}; valid kinds: {valid}", err=True)
+        raise typer.Exit(2) from None
+
+    mem = stage(_store(), fact, kind=parsed_kind, confidence=confidence)
     typer.echo(f"staged {mem.id}: [{mem.kind.value}] {mem.fact}")
 
 
@@ -108,8 +118,26 @@ def gen_context(
         typer.echo(block)
         return
     existing = write.read_text(encoding="utf-8") if write.exists() else ""
-    write.write_text(upsert_block(existing, block), encoding="utf-8")
+    _atomic_replace(write, upsert_block(existing, block))
     typer.echo(f"updated {write}")
+
+
+def _atomic_replace(path: Path, content: str) -> None:
+    """Write ``content`` to ``path`` via a temp file + rename so an interrupted
+    run can never leave a half-written context file. The user's file is theirs:
+    its mode is preserved and no store audit/.bak machinery is written beside it.
+    """
+    mode = path.stat().st_mode if path.exists() else None
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        if mode is not None:
+            os.chmod(tmp, mode & 0o777)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
 
 
 @app.command()
@@ -207,7 +235,10 @@ def forget(memory_id: str) -> None:
     if not result["ok"]:
         typer.echo(result["error"])
         raise typer.Exit(1)
-    typer.echo(f"forgotten {result['id']}  undo_token={result['undo_token']}")
+    typer.echo(
+        f"removed {result['id']} from recall (history and audit may retain it)  "
+        f"undo_token={result['undo_token']}"
+    )
 
 
 @app.command()
@@ -234,7 +265,11 @@ def import_(directory: Path) -> None:
 
 
 def main() -> None:
-    app()
+    try:
+        app()
+    except (StoreFormatError, ConfigError) as e:
+        typer.echo(str(e), err=True)
+        raise SystemExit(1) from e
 
 
 if __name__ == "__main__":

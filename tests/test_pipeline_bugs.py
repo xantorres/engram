@@ -362,8 +362,8 @@ class TestKindAllowlist:
         assert actions["prefers pnpm"] == "append"
         assert actions["VAT is 12345678X"] == "queue"
 
-    def test_allowlist_promotes_identity_kind(self, tmp_path):
-        """identity normally queued; when in allowlist → appended if no conflict."""
+    def test_allowlist_cannot_promote_curated_kind(self, tmp_path):
+        """Curated kinds always queue for review, even when listed in the allowlist."""
         from engram.bridge import promote as bridge
 
         store = self._store_with(
@@ -371,7 +371,7 @@ class TestKindAllowlist:
             Memory(fact="email is user@example.com", kind=Kind.identity),
         )
         result = bridge.plan(store, kind_allowlist=["identity"])
-        assert result.routes[0].action == "append"
+        assert result.routes[0].action == "queue"
 
     def test_allowlist_does_not_bypass_conflict_routing(self, tmp_path):
         """Conflict always queues even if kind is in allowlist."""
@@ -393,13 +393,13 @@ class TestKindAllowlist:
 
     def test_allowlist_from_config_env_override(self, tmp_path, monkeypatch):
         """ENGRAM_BRIDGE_KIND_ALLOWLIST env var splits on comma → list."""
-        monkeypatch.setenv("ENGRAM_BRIDGE_KIND_ALLOWLIST", "identity,health")
+        monkeypatch.setenv("ENGRAM_BRIDGE_KIND_ALLOWLIST", "tooling,project")
         from importlib import reload
 
         import engram.config as config_mod
         reload(config_mod)
         cfg = config_mod.load()
-        assert cfg.kind_allowlist == ["identity", "health"]
+        assert cfg.kind_allowlist == ["tooling", "project"]
 
     def test_allowlist_absent_env_returns_none(self, tmp_path, monkeypatch):
         """No env var and no config → kind_allowlist is None."""

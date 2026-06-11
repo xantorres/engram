@@ -22,7 +22,12 @@ def read_session(path: str | Path) -> list[Turn]:
             record = json.loads(line)
         except json.JSONDecodeError:
             continue
-        message = record.get("message") or {}
+        if not isinstance(record, dict):
+            continue
+        message = record.get("message")
+        if message is not None and not isinstance(message, dict):
+            continue
+        message = message or {}
         role = message.get("role") or record.get("role")
         if role not in ("user", "assistant"):
             continue

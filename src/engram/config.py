@@ -12,7 +12,48 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+from engram.core.schema import Kind
+from engram.core.tiers import CURATED_KINDS
 from engram.extract.client import ExtractorConfig
+
+
+class ConfigError(ValueError):
+    """A config value has the wrong type or shape; engram fails closed."""
+
+
+def _check_str(value: object, name: str, *, optional: bool = False) -> str | None:
+    if value is None and optional:
+        return None
+    if not isinstance(value, str):
+        raise ConfigError(f"{name} must be a string, got {type(value).__name__}")
+    return value
+
+
+def _check_bool(value: object, name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ConfigError(f"{name} must be a boolean, got {type(value).__name__}")
+    return value
+
+
+def _check_str_list(value: object, name: str) -> list[str]:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ConfigError(f"{name} must be a list of strings")
+    return value
+
+
+def _validate_allowlist(items: list[str]) -> None:
+    """Every allowlisted kind must be real and non-curated.
+
+    Curated kinds (identity, fiscal, people, ...) always require human review, so
+    letting one into the allowlist would silently reopen the bypass it closes.
+    """
+    for item in items:
+        try:
+            kind = Kind(item)
+        except ValueError as e:
+            raise ConfigError(f"bridge.kind_allowlist has unknown kind: {item!r}") from e
+        if kind in CURATED_KINDS:
+            raise ConfigError(f"bridge.kind_allowlist may not contain curated kind: {item!r}")
 
 
 def default_store_dir() -> Path:
@@ -59,22 +100,39 @@ def load(path: str | Path | None = None) -> Config:
     extractor = data.get("extractor", {})
     bridge = data.get("bridge", {})
 
+    store_dir_value = _check_str(store.get("dir"), "store.dir", optional=True)
     store_dir = Path(
-        os.environ.get("ENGRAM_STORE", store.get("dir") or default_store_dir())
+        os.environ.get("ENGRAM_STORE", store_dir_value or default_store_dir())
     ).expanduser()
 
-    toml_allowlist = bridge.get("kind_allowlist") or None
-    kind_allowlist = _env_list("ENGRAM_BRIDGE_KIND_ALLOWLIST", toml_allowlist)
+    toml_allowlist = bridge.get("kind_allowlist")
+    if toml_allowlist is not None:
+        _check_str_list(toml_allowlist, "bridge.kind_allowlist")
+    kind_allowlist = _env_list("ENGRAM_BRIDGE_KIND_ALLOWLIST", toml_allowlist or None)
+    if kind_allowlist is not None:
+        _validate_allowlist(kind_allowlist)
 
     return Config(
         store_dir=store_dir,
         extractor=ExtractorConfig(
             base_url=os.environ.get(
-                "ENGRAM_EXTRACTOR_URL", extractor.get("base_url", "http://localhost:1234/v1")
+                "ENGRAM_EXTRACTOR_URL",
+                _check_str(extractor.get("base_url"), "extractor.base_url", optional=True)
+                or "http://localhost:1234/v1",
             ),
-            model=os.environ.get("ENGRAM_EXTRACTOR_MODEL", extractor.get("model", "local-model")),
-            api_key=os.environ.get("ENGRAM_EXTRACTOR_KEY", extractor.get("api_key")),
+            model=os.environ.get(
+                "ENGRAM_EXTRACTOR_MODEL",
+                _check_str(extractor.get("model"), "extractor.model", optional=True)
+                or "local-model",
+            ),
+            api_key=os.environ.get(
+                "ENGRAM_EXTRACTOR_KEY",
+                _check_str(extractor.get("api_key"), "extractor.api_key", optional=True),
+            ),
         ),
-        autopromote=_env_bool("ENGRAM_AUTOPROMOTE", bool(bridge.get("autopromote", False))),
+        autopromote=_env_bool(
+            "ENGRAM_AUTOPROMOTE",
+            _check_bool(bridge.get("autopromote", False), "bridge.autopromote"),
+        ),
         kind_allowlist=kind_allowlist,
     )

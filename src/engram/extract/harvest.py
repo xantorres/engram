@@ -8,10 +8,11 @@ well-formed, confident candidates.
 from __future__ import annotations
 
 import json
-import re
 from typing import Protocol
 
+from engram.core import tiers
 from engram.core.schema import Kind, LearnedBy, Memory
+from engram.core.text import clean_fact
 
 _SYSTEM = """You extract durable facts about the USER from a transcript.
 Return STRICT JSON: {"candidates":[{"fact": string, "kind": string, "confidence": number}]}
@@ -23,8 +24,6 @@ Rules:
   constraints), not task chatter.
 - NEVER invent values. confidence is 0..1.
 - If nothing durable is present, return {"candidates":[]}."""
-
-_JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 
 
 class SupportsComplete(Protocol):
@@ -41,27 +40,35 @@ def harvest(
     candidates = _parse(extractor.complete(_SYSTEM, text))
     out: list[Memory] = []
     for candidate in candidates:
-        fact = str(candidate.get("fact", "")).strip()
+        fact = clean_fact(str(candidate.get("fact", "")))
         confidence = _clamp(candidate.get("confidence", 0.5))
         if not fact or confidence < min_confidence:
             continue
+        kind = _coerce_kind(candidate.get("kind", "preference"))
+        risk_tier = tiers.TIER_AUTO_APPEND
+        if kind is None:
+            # An unrecognised kind is suspicious, not low-risk: keep the fact but
+            # flag it so the bridge routes it to human review instead of auto-logging.
+            kind = Kind.preference
+            risk_tier = tiers.TIER_CURATED
         out.append(
             Memory(
                 fact=fact,
-                kind=_coerce_kind(candidate.get("kind", "preference")),
+                kind=kind,
                 confidence=confidence,
                 learned_by=LearnedBy.harvest,
                 source=source,
+                risk_tier=risk_tier,
             )
         )
     return out
 
 
-def _coerce_kind(value: str) -> Kind:
+def _coerce_kind(value: object) -> Kind | None:
     try:
         return Kind(str(value).strip().lower())
     except ValueError:
-        return Kind.preference
+        return None
 
 
 def _clamp(value: object) -> float:
@@ -74,13 +81,34 @@ def _clamp(value: object) -> float:
 def _parse(raw: str) -> list[dict]:
     raw = raw.strip()
     if raw.startswith("```"):
-        raw = raw.strip("`")
-    match = _JSON_BLOCK.search(raw)
-    if not match:
+        raw = raw.strip("`").strip()
+    data = _find_candidates_object(raw)
+    if data is None:
         return []
+    return [c for c in data["candidates"] if isinstance(c, dict)]
+
+
+def _find_candidates_object(raw: str) -> dict | None:
+    """Return the first JSON object carrying a list-typed ``candidates`` field.
+
+    Tries the whole string first, then scans from each ``{`` with ``raw_decode``
+    so trailing prose or sibling JSON objects can't corrupt the parse.
+    """
     try:
-        data = json.loads(match.group(0))
+        obj = json.loads(raw)
+        if isinstance(obj, dict) and isinstance(obj.get("candidates"), list):
+            return obj
     except json.JSONDecodeError:
-        return []
-    candidates = data.get("candidates", []) if isinstance(data, dict) else []
-    return [c for c in candidates if isinstance(c, dict)]
+        pass
+    decoder = json.JSONDecoder()
+    idx = raw.find("{")
+    while idx != -1:
+        try:
+            obj, _ = decoder.raw_decode(raw, idx)
+        except json.JSONDecodeError:
+            idx = raw.find("{", idx + 1)
+            continue
+        if isinstance(obj, dict) and isinstance(obj.get("candidates"), list):
+            return obj
+        idx = raw.find("{", idx + 1)
+    return None
