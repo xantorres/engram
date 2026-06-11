@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from engram.core import atomic, dedup, tiers
 from engram.core.locking import store_lock
 from engram.core.schema import Memory, Status
-from engram.core.store import Store
+from engram.core.store import MarkdownStore, Store
 
 
 @dataclass
@@ -116,9 +116,22 @@ def apply(
                         atomic.restore_from_bak(log_result["undo_token"], root=root)
                     raise
             elif route.action == "queue":
+                # Escalate the registry, then file the review item. If the queue
+                # write fails, undo the escalation so a sensitive fact is never
+                # left pending-but-invisible to review.
                 escalated = candidate.model_copy(update={"risk_tier": tiers.TIER_CURATED})
-                store.update(escalated)
-                store.enqueue(escalated, dest="memory.md", reason=route.reason)
+                if isinstance(store, MarkdownStore):
+                    _, write_result = store.update_with_token(escalated)
+                    undo_token = write_result["undo_token"]
+                else:
+                    store.update(escalated)
+                    undo_token = None
+                try:
+                    store.enqueue(escalated, dest="memory.md", reason=route.reason)
+                except Exception:
+                    if undo_token is not None and root is not None:
+                        atomic.restore_from_bak(undo_token, root=root)
+                    raise
             elif route.action == "skip":
                 store.update(candidate.model_copy(update={"status": Status.rejected}))
     result.applied = True
