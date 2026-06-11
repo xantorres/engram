@@ -43,7 +43,9 @@ def generic_jsonl_turns(path: str | Path) -> list[Turn]:
             record = json.loads(line)
         except json.JSONDecodeError:
             continue
-        message = record.get("message") if isinstance(record, dict) else None
+        if not isinstance(record, dict):
+            continue
+        message = record.get("message")
         message = message if isinstance(message, dict) else record
         role = message.get("role") or record.get("role")
         if role not in ("user", "assistant"):

@@ -40,6 +40,19 @@ def test_claude_code_reader_skips_non_dict_records(tmp_path):
     assert turns[0].text == "I prefer pnpm"
 
 
+def test_generic_jsonl_skips_non_dict_records(tmp_path):
+    from engram.capture.readers.base import generic_jsonl_turns
+
+    fixture = tmp_path / "s.jsonl"
+    fixture.write_text(
+        '[]\n"hi"\n{"role": "user", "content": "hello"}\n', encoding="utf-8"
+    )
+    turns = generic_jsonl_turns(fixture)
+    assert len(turns) == 1
+    assert turns[0].role == "user"
+    assert turns[0].text == "hello"
+
+
 def test_remember_normalizes_whitespace(tmp_path):
     store = MarkdownStore(tmp_path)
     mem = remember(store, "  uses   neovim\tbtw  ", kind=Kind.tooling)
