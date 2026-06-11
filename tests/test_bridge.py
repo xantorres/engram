@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 
 from engram.bridge import promote as bridge
 from engram.bridge import review
@@ -78,6 +79,25 @@ def test_review_approve_requires_confirm(tmp_path):
     assert review.approve(store, mid, confirm=True, today=dt.date(2026, 6, 9))["ok"]
     assert store.get(mid).status == Status.promoted
     assert store.queue_get(mid) is None
+
+
+def test_approve_does_not_append_to_log(tmp_path):
+    store = _store_with(tmp_path, Memory(fact="VAT is 99999999X", kind=Kind.fiscal))
+    bridge.apply(store, bridge.plan(store), autopromote=True)
+    mid = store.list(status=Status.pending)[0].id
+
+    assert review.approve(store, mid, confirm=True, today=dt.date(2026, 6, 9))["ok"]
+
+    log = tmp_path / "memory-log.md"
+    assert not (log.exists() and "VAT is 99999999X" in log.read_text())
+    assert "VAT is 99999999X" in (tmp_path / "memory.md").read_text()
+    assert store.queue_get(mid) is None
+
+    endpoints = [
+        json.loads(line)["endpoint"]
+        for line in (tmp_path / "audit.jsonl").read_text().splitlines()
+    ]
+    assert "review/approve" in endpoints
 
 
 def test_review_reject(tmp_path):

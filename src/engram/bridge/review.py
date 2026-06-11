@@ -31,9 +31,33 @@ def approve(store: Store, memory_id: str, *, confirm: bool, today: dt.date | Non
             "dest": item.get("dest") or "memory.md",
         }
     )
-    store.update(memory)
-    store.append_log(memory)
+    try:
+        if isinstance(store, MarkdownStore):
+            _, write_result = store.update_with_token(memory)
+            undo_token = write_result["undo_token"]
+        else:
+            store.update(memory)
+            undo_token = ""
+    except KeyError:
+        return {"ok": False, "error": f"unknown memory {memory_id}"}
     store.resolve_queue(memory_id)
+
+    # A curated approval writes only the registry; appending to the low-risk log
+    # would duplicate the sensitive fact into an auto-captured surface it never
+    # belongs in. The audit entry keeps the action traceable without the text.
+    root = getattr(store, "root", None)
+    if root is not None:
+        atomic._append_audit(
+            root,
+            {
+                "ts": dt.datetime.now(dt.UTC).isoformat(),
+                "endpoint": "review/approve",
+                "entity_id": memory.id,
+                "path": str(store.registry) if hasattr(store, "registry") else "",
+                "undo_token": undo_token,
+                "created": False,
+            },
+        )
     return {"ok": True, "id": memory.id}
 
 
