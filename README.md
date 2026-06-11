@@ -24,7 +24,7 @@ Coding agents forget everything between sessions. Workarounds exist, but each is
 ```
 
 - **Capture** - agents call a `remember` tool mid-task, or Engram harvests durable facts from session transcripts using a local model.
-- **Review** - low-risk facts are logged automatically; anything sensitive waits in a queue you approve. Nothing rewrites your curated notes without consent.
+- **Review** - low-risk facts are logged automatically (you choose which kinds); anything sensitive waits in a queue you approve, and any promoted fact can be retracted with `engram forget`. Nothing rewrites your curated notes without consent.
 - **Recall** - every agent loads your memories through an MCP resource or a generated `AGENTS.md` / `CLAUDE.md` context block.
 
 ## Supported clients

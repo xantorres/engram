@@ -39,15 +39,25 @@ Two paths feed the same store:
   text, and the configured extractor (any OpenAI-compatible endpoint) returns
   candidate facts as strict JSON.
 
+Harvested candidates pass a staging filter before they are stored: near
+duplicates (against the store and the same batch) and trivia (bare paths,
+identifier echoes, very short facts) are dropped, and each surviving fact is
+attributed to its source project (`harness:<harness>:<project>`), so identical
+fact text from different repos stays distinct.
+
 The extractor is pluggable and local-first by default (LM Studio / Ollama).
 
 ## Bridge (`bridge/`)
 
 `promote.plan()` reads pending candidates, dedups them against promoted
 memories, classifies risk, and routes each: low-risk to the log, sensitive or
-conflicting to the review queue. `promote.apply()` does nothing unless
-`autopromote` is on, so the bridge ships dark and is `--dry-run` by default.
-`review.approve()` is a tier-3 write and is refused without explicit confirm.
+conflicting to the review queue. An optional `[bridge] kind_allowlist` widens
+the auto-append path to chosen kinds (conflicts still queue); without it,
+routing falls back to the tier model alone. `promote.apply()` does nothing
+unless `autopromote` is on, so the bridge ships dark and is `--dry-run` by
+default. `review.approve()` is a tier-3 write and is refused without explicit
+confirm. `review.forget()` reverses a promotion: the fact is marked rejected
+through the same atomic path, leaving an audit entry and a working undo token.
 
 ## Recall (`recall/`)
 

@@ -31,7 +31,22 @@ engram sync --apply
 engram queue
 engram promote mem-0002            # refused: tier-3 needs confirmation
 engram promote mem-0002 --confirm  # approved
+engram forget mem-0001             # retract a promoted fact (prints undo token)
 ```
+
+## Auto-append low-risk kinds
+
+By default every harvested fact waits in the queue. Opt selected kinds into
+hands-off promotion:
+
+```toml
+# config.toml
+[bridge]
+kind_allowlist = ["preference", "tooling", "infra"]
+```
+
+Or per-shell: `export ENGRAM_BRIDGE_KIND_ALLOWLIST=preference,tooling,infra`.
+Conflicting facts still queue for review regardless of kind.
 
 ## Recall
 
@@ -52,4 +67,9 @@ engram gen-context --write AGENTS.md
 
 ```bash
 engram harvest ~/.codex/sessions/2026/some-session.jsonl --harness codex
+# harvested 3 facts (skipped dupe=2 trivial=1)
 ```
+
+Facts are attributed to their source project (`harness:codex:<project>`), and
+near-duplicates and trivia (bare paths, identifier echoes) are dropped before
+they reach the queue.
