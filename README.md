@@ -86,7 +86,7 @@ It federates capture across your agents, gates sensitive writes behind your appr
 - [Quickstart](examples/quickstart.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Security and privacy](docs/SECURITY.md)
-- [Adapters](adapters/README.md)
+- [Adapters](https://github.com/xantorres/engram/tree/main/adapters)
 
 ## License
 
