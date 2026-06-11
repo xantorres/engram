@@ -8,7 +8,6 @@ well-formed, confident candidates.
 from __future__ import annotations
 
 import json
-import re
 from typing import Protocol
 
 from engram.core.schema import Kind, LearnedBy, Memory
@@ -23,8 +22,6 @@ Rules:
   constraints), not task chatter.
 - NEVER invent values. confidence is 0..1.
 - If nothing durable is present, return {"candidates":[]}."""
-
-_JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 
 
 class SupportsComplete(Protocol):
@@ -74,13 +71,34 @@ def _clamp(value: object) -> float:
 def _parse(raw: str) -> list[dict]:
     raw = raw.strip()
     if raw.startswith("```"):
-        raw = raw.strip("`")
-    match = _JSON_BLOCK.search(raw)
-    if not match:
+        raw = raw.strip("`").strip()
+    data = _find_candidates_object(raw)
+    if data is None:
         return []
+    return [c for c in data["candidates"] if isinstance(c, dict)]
+
+
+def _find_candidates_object(raw: str) -> dict | None:
+    """Return the first JSON object carrying a list-typed ``candidates`` field.
+
+    Tries the whole string first, then scans from each ``{`` with ``raw_decode``
+    so trailing prose or sibling JSON objects can't corrupt the parse.
+    """
     try:
-        data = json.loads(match.group(0))
+        obj = json.loads(raw)
+        if isinstance(obj, dict) and isinstance(obj.get("candidates"), list):
+            return obj
     except json.JSONDecodeError:
-        return []
-    candidates = data.get("candidates", []) if isinstance(data, dict) else []
-    return [c for c in candidates if isinstance(c, dict)]
+        pass
+    decoder = json.JSONDecoder()
+    idx = raw.find("{")
+    while idx != -1:
+        try:
+            obj, _ = decoder.raw_decode(raw, idx)
+        except json.JSONDecodeError:
+            idx = raw.find("{", idx + 1)
+            continue
+        if isinstance(obj, dict) and isinstance(obj.get("candidates"), list):
+            return obj
+        idx = raw.find("{", idx + 1)
+    return None
