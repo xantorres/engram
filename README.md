@@ -100,6 +100,10 @@ Everything is plain files in one folder — your store directory (default `~/.lo
 
 To change a fact, edit the frontmatter or use the CLI (`remember` / `promote` / `forget`) — don't hand-edit the generated body, it's overwritten on the next write. Because it's just files in a folder, your whole memory rides whatever already backs that folder up (Git, Dropbox, a NAS).
 
+## How recall stays fresh
+
+Agents read your memory two ways. The **`memory://recall` MCP resource** is computed live on every call — always current. The **`CLAUDE.md` / `AGENTS.md` block** is a *materialized view* of that recall, for agents that only read a file at session start. With `[recall] auto_refresh = true`, Engram rewrites those blocks the instant promoted state changes (`sync --apply`, `promote`, `forget`), so a session always reads the latest; a daily `gen-context` job stays as a safety net. A block only lags if `auto_refresh` is off and you rely on the daily job alone. Full explanation: [docs/RECALL.md](docs/RECALL.md).
+
 ## How it compares
 
 ### vs. a plain `CLAUDE.md` / instructions file
@@ -183,6 +187,7 @@ command = "engram-mcp"
 
 - [Quickstart](examples/quickstart.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [How recall stays fresh](docs/RECALL.md)
 - [Security and privacy](docs/SECURITY.md)
 - [Adapters](https://github.com/xantorres/engram/tree/main/adapters)
 
