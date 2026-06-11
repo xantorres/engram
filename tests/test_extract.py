@@ -43,9 +43,11 @@ def test_harvest_filters_below_min_confidence():
     assert harvest("t", Stub(raw), min_confidence=0.5) == []
 
 
-def test_harvest_unknown_kind_falls_back():
+def test_harvest_unknown_kind_flags_curated():
     raw = '{"candidates":[{"fact":"y","kind":"banana","confidence":0.9}]}'
-    assert harvest("t", Stub(raw))[0].kind == Kind.preference
+    mem = harvest("t", Stub(raw))[0]
+    assert mem.kind == Kind.preference
+    assert mem.risk_tier == 3
 
 
 def test_harvest_returns_empty_on_garbage():

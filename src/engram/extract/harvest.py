@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from typing import Protocol
 
+from engram.core import tiers
 from engram.core.schema import Kind, LearnedBy, Memory
 
 _SYSTEM = """You extract durable facts about the USER from a transcript.
@@ -42,23 +43,31 @@ def harvest(
         confidence = _clamp(candidate.get("confidence", 0.5))
         if not fact or confidence < min_confidence:
             continue
+        kind = _coerce_kind(candidate.get("kind", "preference"))
+        risk_tier = tiers.TIER_AUTO_APPEND
+        if kind is None:
+            # An unrecognised kind is suspicious, not low-risk: keep the fact but
+            # flag it so the bridge routes it to human review instead of auto-logging.
+            kind = Kind.preference
+            risk_tier = tiers.TIER_CURATED
         out.append(
             Memory(
                 fact=fact,
-                kind=_coerce_kind(candidate.get("kind", "preference")),
+                kind=kind,
                 confidence=confidence,
                 learned_by=LearnedBy.harvest,
                 source=source,
+                risk_tier=risk_tier,
             )
         )
     return out
 
 
-def _coerce_kind(value: str) -> Kind:
+def _coerce_kind(value: object) -> Kind | None:
     try:
         return Kind(str(value).strip().lower())
     except ValueError:
-        return Kind.preference
+        return None
 
 
 def _clamp(value: object) -> float:

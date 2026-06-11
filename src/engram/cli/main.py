@@ -47,7 +47,14 @@ def remember(
     """Stage a fact into memory (pending review)."""
     from engram.capture.active import remember as stage
 
-    mem = stage(_store(), fact, kind=Kind(kind), confidence=confidence)
+    try:
+        parsed_kind = Kind(kind)
+    except ValueError:
+        valid = ", ".join(k.value for k in Kind)
+        typer.echo(f"unknown kind {kind!r}; valid kinds: {valid}", err=True)
+        raise typer.Exit(2) from None
+
+    mem = stage(_store(), fact, kind=parsed_kind, confidence=confidence)
     typer.echo(f"staged {mem.id}: [{mem.kind.value}] {mem.fact}")
 
 

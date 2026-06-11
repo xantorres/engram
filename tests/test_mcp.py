@@ -1,6 +1,8 @@
 import asyncio
 
+import pytest
 from fastmcp import Client
+from fastmcp.exceptions import ToolError
 
 from engram.core.schema import Status
 from engram.core.store import MarkdownStore
@@ -9,6 +11,17 @@ from engram.mcp.server import mcp
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def test_remember_rejects_unknown_kind(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENGRAM_STORE", str(tmp_path / "store"))
+
+    async def call():
+        async with Client(mcp) as client:
+            await client.call_tool("remember", {"fact": "x", "kind": "banana"})
+
+    with pytest.raises(ToolError):
+        _run(call())
 
 
 def test_tools_registered():
