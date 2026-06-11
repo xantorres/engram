@@ -24,6 +24,12 @@ def test_plan_routes_by_kind(tmp_path):
     assert actions["VAT is 12345678X"] == "queue"
 
 
+def test_plan_allowlist_ignores_curated_kinds(tmp_path):
+    store = _store_with(tmp_path, Memory(fact="VAT is 12345678X", kind=Kind.fiscal))
+    result = bridge.plan(store, kind_allowlist=["fiscal"])
+    assert result.routes[0].action == "queue"
+
+
 def test_plan_skips_duplicates(tmp_path):
     store = MarkdownStore(tmp_path)
     store.add(Memory(fact="prefers pnpm over npm", kind=Kind.tooling, status=Status.promoted))

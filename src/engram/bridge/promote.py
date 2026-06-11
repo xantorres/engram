@@ -43,9 +43,10 @@ class PromotionResult:
 def plan(store: Store, *, kind_allowlist: list[str] | None = None) -> PromotionResult:
     """Route pending candidates to append, queue, or skip.
 
-    kind_allowlist: when provided, any candidate whose kind is in the list is
-    appended directly (bypassing tier classification) unless a conflict exists.
-    None falls back to the standard AUTO_KINDS tier logic.
+    kind_allowlist: when provided, a candidate whose non-curated kind is in the
+    list is appended directly (bypassing tier classification) unless a conflict
+    exists. Curated kinds always fall through to classification and queue for
+    review, regardless of the allowlist. None falls back to standard tier logic.
     """
     promoted = store.list(status=Status.promoted)
     result = PromotionResult()
@@ -55,7 +56,12 @@ def plan(store: Store, *, kind_allowlist: list[str] | None = None) -> PromotionR
             result.routes.append(Route(candidate, "skip", f"already known ({against})"))
             continue
         conflict = verdict == "conflict"
-        if kind_allowlist is not None and candidate.kind.value in kind_allowlist and not conflict:
+        if (
+            kind_allowlist is not None
+            and candidate.kind.value in kind_allowlist
+            and candidate.kind not in tiers.CURATED_KINDS
+            and not conflict
+        ):
             result.routes.append(Route(candidate, "append", "kind in allowlist"))
         else:
             tier = tiers.classify(candidate.kind, conflict=conflict)
