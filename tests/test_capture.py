@@ -22,6 +22,24 @@ def test_remember_stages_pending(tmp_path):
     assert store.get(mem.id) is not None
 
 
+def test_claude_code_reader_skips_non_dict_records(tmp_path):
+    from engram.capture.readers.claude_code import read_session
+
+    lines = [
+        json.dumps([1, 2]),
+        json.dumps("hello"),
+        json.dumps({"message": "not-a-dict", "role": "user"}),
+        json.dumps({"message": {"role": "user", "content": "I prefer pnpm"}}),
+    ]
+    fixture = tmp_path / "session.jsonl"
+    fixture.write_text("\n".join(lines), encoding="utf-8")
+
+    turns = read_session(fixture)
+    assert len(turns) == 1
+    assert turns[0].role == "user"
+    assert turns[0].text == "I prefer pnpm"
+
+
 def test_harvest_session_claude_code(tmp_path):
     user_turn = {"message": {"role": "user", "content": "I prefer pnpm"}}
     asst_turn = {
