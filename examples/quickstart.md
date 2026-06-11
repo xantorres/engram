@@ -2,8 +2,12 @@
 
 ## Install
 
+Not yet on PyPI — install from source:
+
 ```bash
-uv tool install engram      # or: pipx install engram
+uv tool install git+https://github.com/xantorres/engram
+# or: pipx install git+https://github.com/xantorres/engram
+# or from a clone: uv tool install .
 ```
 
 ## Capture a few facts
