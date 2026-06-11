@@ -79,6 +79,22 @@ def test_harvest_session_claude_code(tmp_path):
     assert store.get(result["memories"][0].id).source.startswith("harness:claude-code")
 
 
+def test_harvest_session_records_project(tmp_path):
+    proj_dir = tmp_path / ".claude" / "projects" / "-Users-alice-myapp"
+    proj_dir.mkdir(parents=True)
+    fixture = proj_dir / "session.jsonl"
+    fixture.write_text(
+        json.dumps({"message": {"role": "user", "content": "I prefer pnpm"}}), encoding="utf-8"
+    )
+    canned = (
+        '{"candidates":[{"fact":"prefers pnpm over npm for installs",'
+        '"kind":"tooling","confidence":0.9}]}'
+    )
+    store = MarkdownStore(tmp_path / "store")
+    result = harvest_session(store, fixture, harness="claude-code", extractor=Stub(canned))
+    assert store.get(result["memories"][0].id).project == "-Users-alice-myapp"
+
+
 def test_harvest_session_caps_input(tmp_path):
     fixture = tmp_path / "big.jsonl"
     fixture.write_text(

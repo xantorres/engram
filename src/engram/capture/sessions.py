@@ -84,7 +84,7 @@ def harvest_session(
         if not verdict.admitted:
             skipped[verdict.category] += 1
             continue
-        mem = store.add(candidate)
+        mem = store.add(candidate.model_copy(update={"project": project}))
         staged.append(mem)
         existing.append(mem)
         superseded.extend(supersede.flag_contradicted(store, mem))
