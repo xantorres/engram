@@ -33,6 +33,15 @@ def test_update_persists(tmp_path):
     assert store.get(m.id).status == Status.promoted
 
 
+def test_append_log_flattens_multiline_fact(tmp_path):
+    store = MarkdownStore(tmp_path)
+    mem = store.add(Memory(fact="alpha\nbeta\ngamma", kind=Kind.tooling))
+    store.append_log(mem)
+    text = (tmp_path / "memory-log.md").read_text()
+    entry_line = next(line for line in text.splitlines() if "alpha" in line)
+    assert "alpha beta gamma" in entry_line
+
+
 def test_append_log_is_newest_first(tmp_path):
     store = MarkdownStore(tmp_path)
     first = store.add(Memory(fact="first fact", kind=Kind.tooling))

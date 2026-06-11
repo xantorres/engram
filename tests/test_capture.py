@@ -40,6 +40,12 @@ def test_claude_code_reader_skips_non_dict_records(tmp_path):
     assert turns[0].text == "I prefer pnpm"
 
 
+def test_remember_normalizes_whitespace(tmp_path):
+    store = MarkdownStore(tmp_path)
+    mem = remember(store, "  uses   neovim\tbtw  ", kind=Kind.tooling)
+    assert mem.fact == "uses neovim btw"
+
+
 def test_harvest_session_claude_code(tmp_path):
     user_turn = {"message": {"role": "user", "content": "I prefer pnpm"}}
     asst_turn = {
