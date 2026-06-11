@@ -1,6 +1,16 @@
 import json
+import stat
 
 from engram.core.atomic import atomic_write, restore_from_bak
+
+
+def test_atomic_write_sets_0600_on_target_bak_and_audit(tmp_path):
+    res = atomic_write(tmp_path / "f.md", "x", root=tmp_path, endpoint="t", entity_id="m")
+    target = tmp_path / "f.md"
+    bak = tmp_path / ".bak" / f"{res['undo_token']}.bak"
+    audit = tmp_path / "audit.jsonl"
+    for path in (target, bak, audit):
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
 def test_write_then_undo_deletes_created_file(tmp_path):

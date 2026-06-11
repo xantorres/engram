@@ -1,5 +1,30 @@
+import os
+import stat
+
 from engram.core.schema import Kind, Memory, Status
 from engram.core.store import MarkdownStore
+
+
+def test_store_init_tightens_existing_modes(tmp_path):
+    root = tmp_path / "store"
+    root.mkdir()
+    registry = root / "memory.md"
+    registry.write_text("---\nschema: memory.v1\n---\n", encoding="utf-8")
+    os.chmod(registry, 0o644)
+    os.chmod(root, 0o755)
+
+    MarkdownStore(root)
+    assert stat.S_IMODE(registry.stat().st_mode) == 0o600
+    assert stat.S_IMODE(root.stat().st_mode) == 0o700
+
+
+def test_queue_and_done_dirs_are_0700(tmp_path):
+    store = MarkdownStore(tmp_path)
+    mem = store.add(Memory(fact="a", kind=Kind.tooling))
+    store.enqueue(mem, dest="memory.md")
+    assert stat.S_IMODE((tmp_path / "queue").stat().st_mode) == 0o700
+    store.resolve_queue(mem.id)
+    assert stat.S_IMODE((tmp_path / "queue" / "_done").stat().st_mode) == 0o700
 
 
 def test_add_allocates_id_and_persists(tmp_path):
