@@ -38,8 +38,12 @@ Coding agents forget everything between sessions. Workarounds exist, but each is
 
 ## Quickstart
 
+Not yet on PyPI — install from source:
+
 ```bash
-uv tool install engram          # or: pipx install engram
+uv tool install git+https://github.com/xantorres/engram
+# or: pipx install git+https://github.com/xantorres/engram
+# or from a clone: uv tool install .
 
 engram remember "I prefer pnpm over npm"
 engram recall                   # list what engram knows
