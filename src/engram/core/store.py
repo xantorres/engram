@@ -136,6 +136,8 @@ class MarkdownStore(Store):
             memories = self._load()
             if not memory.id:
                 memory = memory.model_copy(update={"id": self._next_id(memories)})
+            elif not _valid_id(memory.id):
+                raise ValueError(f"refusing to persist non-generated memory id: {memory.id!r}")
             memories.append(memory)
             self._save(memories)
             return memory
