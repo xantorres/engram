@@ -13,6 +13,7 @@ import os
 import re
 import tempfile
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from engram.core.locking import store_lock
@@ -21,6 +22,18 @@ _TOKEN_RE = re.compile(r"^[0-9a-f]{12}$")
 
 DIR_MODE = 0o700
 FILE_MODE = 0o600
+
+
+@dataclass(frozen=True)
+class RetentionPolicy:
+    """Opportunistic cleanup thresholds applied on each retained write.
+
+    ``None`` disables a knob, so the default policy is a no-op and callers opt in
+    by passing one built from :class:`engram.config.GcConfig`.
+    """
+
+    bak_keep_days: int | None = None
+    audit_max_bytes: int | None = None
 
 
 def secure_dir(path: str | Path) -> Path:
@@ -46,7 +59,52 @@ def _audit_path(root: Path) -> Path:
     return root / "audit.jsonl"
 
 
-def _append_audit(root: Path, record: dict) -> None:
+def _prune_bak(root: str | Path, keep_days: int | None) -> int:
+    """Delete ``.bak`` snapshots older than ``keep_days`` by mtime; return the count.
+
+    ``keep_days=0`` keeps nothing; ``None`` is a no-op. Cheap and opportunistic —
+    callers run it inside ``store_lock``.
+    """
+    if keep_days is None:
+        return 0
+    bak_dir = _bak_dir(Path(root))
+    if not bak_dir.exists():
+        return 0
+    cutoff = dt.datetime.now(dt.UTC).timestamp() - keep_days * 86400
+    removed = 0
+    for snapshot in bak_dir.glob("*.bak"):
+        try:
+            if snapshot.stat().st_mtime < cutoff:
+                snapshot.unlink()
+                removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+def _rotate_audit(root: str | Path, max_bytes: int | None) -> Path | None:
+    """Rename ``audit.jsonl`` aside once it exceeds ``max_bytes``; return the new path.
+
+    The rotated file keeps its 0600 mode (rename preserves it) and a unique
+    timestamp suffix so concurrent rotations never clobber an earlier archive.
+    """
+    if max_bytes is None:
+        return None
+    audit = _audit_path(Path(root))
+    if not audit.exists() or audit.stat().st_size <= max_bytes:
+        return None
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%S")
+    target = audit.with_name(f"audit.jsonl.{stamp}")
+    suffix = 0
+    while target.exists():
+        suffix += 1
+        target = audit.with_name(f"audit.jsonl.{stamp}.{suffix}")
+    audit.rename(target)
+    return target
+
+
+def _append_audit(root: Path, record: dict, *, max_bytes: int | None = None) -> None:
+    _rotate_audit(root, max_bytes)
     fd = os.open(_audit_path(root), os.O_WRONLY | os.O_CREAT | os.O_APPEND, FILE_MODE)
     with os.fdopen(fd, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(record) + "\n")
@@ -59,13 +117,16 @@ def atomic_write(
     root: str | Path | None = None,
     endpoint: str = "",
     entity_id: str = "",
+    retention: RetentionPolicy | None = None,
 ) -> dict:
     """Write ``content`` to ``path`` atomically, snapshotting any prior content.
 
-    Returns ``{"ok", "undo_token", "path"}``.
+    Returns ``{"ok", "undo_token", "path"}``. When ``retention`` is given, the
+    audit log is rotated past its cap and stale ``.bak`` snapshots are pruned.
     """
     path = Path(path)
     root = Path(root) if root is not None else path.parent
+    retention = retention or RetentionPolicy()
     secure_dir(_bak_dir(root))
     secure_dir(path.parent)
 
@@ -99,7 +160,9 @@ def atomic_write(
             "undo_token": token,
             "created": previous is None,
         },
+        max_bytes=retention.audit_max_bytes,
     )
+    _prune_bak(root, retention.bak_keep_days)
     return {"ok": True, "undo_token": token, "path": str(path)}
 
 

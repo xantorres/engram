@@ -26,8 +26,16 @@ app = typer.Typer(
 )
 
 
+def _store_for(config) -> MarkdownStore:
+    return MarkdownStore(
+        config.store_dir,
+        bak_keep_days=config.gc.bak_keep_days,
+        audit_max_bytes=config.gc.audit_max_bytes,
+    )
+
+
 def _store() -> MarkdownStore:
-    return MarkdownStore(load_config().store_dir)
+    return _store_for(load_config())
 
 
 @app.callback()
@@ -93,7 +101,7 @@ def harvest(
 
     config = load_config()
     result = harvest_session(
-        MarkdownStore(config.store_dir),
+        _store_for(config),
         path,
         harness=harness,
         extractor=Extractor(config.extractor),
@@ -203,7 +211,7 @@ def sync(
             raise typer.Exit(2) from None
 
     config = load_config()
-    store = MarkdownStore(config.store_dir)
+    store = _store_for(config)
     result = bridge.plan(
         store,
         kind_allowlist=config.kind_allowlist,

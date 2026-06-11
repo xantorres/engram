@@ -72,12 +72,21 @@ class Store(abc.ABC):
 
 
 class MarkdownStore(Store):
-    def __init__(self, root: str | Path):
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        bak_keep_days: int | None = None,
+        audit_max_bytes: int | None = None,
+    ):
         self.root = Path(root)
         atomic.secure_dir(self.root)
         self.registry = self.root / "memory.md"
         self.log = self.root / "memory-log.md"
         self.queue_dir = self.root / "queue"
+        self._retention = atomic.RetentionPolicy(
+            bak_keep_days=bak_keep_days, audit_max_bytes=audit_max_bytes
+        )
         self._chmod_existing()
 
     def _chmod_existing(self) -> None:
@@ -120,7 +129,13 @@ class MarkdownStore(Store):
             + "---\n\n"
             + _render_body(memories)
         )
-        return atomic.atomic_write(self.registry, content, root=self.root, endpoint="store/save")
+        return atomic.atomic_write(
+            self.registry,
+            content,
+            root=self.root,
+            endpoint="store/save",
+            retention=self._retention,
+        )
 
     @staticmethod
     def _next_id(memories: list[Memory]) -> str:
@@ -194,6 +209,7 @@ class MarkdownStore(Store):
                 root=self.root,
                 endpoint="memory/append",
                 entity_id=memory.id,
+                retention=self._retention,
             )
 
     def enqueue(
@@ -210,6 +226,7 @@ class MarkdownStore(Store):
                 root=self.root,
                 endpoint="queue/enqueue",
                 entity_id=memory.id,
+                retention=self._retention,
             )
 
     def queue_list(self) -> list[dict]:

@@ -21,7 +21,12 @@ mcp = FastMCP("engram")
 
 
 def _store() -> MarkdownStore:
-    return MarkdownStore(load_config().store_dir)
+    config = load_config()
+    return MarkdownStore(
+        config.store_dir,
+        bak_keep_days=config.gc.bak_keep_days,
+        audit_max_bytes=config.gc.audit_max_bytes,
+    )
 
 
 def _kind(value: str) -> Kind:
