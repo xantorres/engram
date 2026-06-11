@@ -21,6 +21,7 @@ from pathlib import Path
 import yaml
 
 from engram.core import atomic
+from engram.core.locking import store_lock
 from engram.core.schema import SCHEMA_VERSION, Memory, Status
 from engram.core.text import render_safe
 
@@ -115,12 +116,13 @@ class MarkdownStore(Store):
         return f"mem-{(max(nums) + 1) if nums else 1:04d}"
 
     def add(self, memory: Memory) -> Memory:
-        memories = self._load()
-        if not memory.id:
-            memory = memory.model_copy(update={"id": self._next_id(memories)})
-        memories.append(memory)
-        self._save(memories)
-        return memory
+        with store_lock(self.root):
+            memories = self._load()
+            if not memory.id:
+                memory = memory.model_copy(update={"id": self._next_id(memories)})
+            memories.append(memory)
+            self._save(memories)
+            return memory
 
     def get(self, memory_id: str) -> Memory | None:
         return next((m for m in self._load() if m.id == memory_id), None)
@@ -132,13 +134,14 @@ class MarkdownStore(Store):
         return memories
 
     def update(self, memory: Memory) -> Memory:
-        memories = self._load()
-        for i, existing in enumerate(memories):
-            if existing.id == memory.id:
-                memories[i] = memory
-                self._save(memories)
-                return memory
-        raise KeyError(f"unknown memory id: {memory.id}")
+        with store_lock(self.root):
+            memories = self._load()
+            for i, existing in enumerate(memories):
+                if existing.id == memory.id:
+                    memories[i] = memory
+                    self._save(memories)
+                    return memory
+            raise KeyError(f"unknown memory id: {memory.id}")
 
     def update_with_token(self, memory: Memory) -> tuple[Memory, dict]:
         """Update a memory and return (memory, atomic_write_result).
@@ -147,44 +150,47 @@ class MarkdownStore(Store):
         write — callers that need to surface undo capability use this instead of
         update() so they receive the token from the actual file mutation.
         """
-        memories = self._load()
-        for i, existing in enumerate(memories):
-            if existing.id == memory.id:
-                memories[i] = memory
-                write_result = self._save(memories)
-                return memory, write_result
-        raise KeyError(f"unknown memory id: {memory.id}")
+        with store_lock(self.root):
+            memories = self._load()
+            for i, existing in enumerate(memories):
+                if existing.id == memory.id:
+                    memories[i] = memory
+                    write_result = self._save(memories)
+                    return memory, write_result
+            raise KeyError(f"unknown memory id: {memory.id}")
 
     def append_log(self, memory: Memory) -> dict:
-        stamp = f"{dt.datetime.now(dt.UTC):%Y-%m-%dT%H:%M:%SZ}"
-        line = (
-            f"- {stamp} · [{memory.kind.value}] {render_safe(memory.fact)} "
-            f"(conf {memory.confidence:.2f}, src {memory.source}, id {memory.id})\n"
-        )
-        entries = ""
-        if self.log.exists():
-            text = self.log.read_text(encoding="utf-8")
-            entries = text[len(_LOG_HEADER) :] if text.startswith(_LOG_HEADER) else text
-        return atomic.atomic_write(
-            self.log,
-            _LOG_HEADER + line + entries,
-            root=self.root,
-            endpoint="memory/append",
-            entity_id=memory.id,
-        )
+        with store_lock(self.root):
+            stamp = f"{dt.datetime.now(dt.UTC):%Y-%m-%dT%H:%M:%SZ}"
+            line = (
+                f"- {stamp} · [{memory.kind.value}] {render_safe(memory.fact)} "
+                f"(conf {memory.confidence:.2f}, src {memory.source}, id {memory.id})\n"
+            )
+            entries = ""
+            if self.log.exists():
+                text = self.log.read_text(encoding="utf-8")
+                entries = text[len(_LOG_HEADER) :] if text.startswith(_LOG_HEADER) else text
+            return atomic.atomic_write(
+                self.log,
+                _LOG_HEADER + line + entries,
+                root=self.root,
+                endpoint="memory/append",
+                entity_id=memory.id,
+            )
 
     def enqueue(
         self, memory: Memory, *, dest: str | None = None, diff: str = "", reason: str = ""
     ) -> dict:
-        atomic.secure_dir(self.queue_dir)
-        payload = {"memory": memory.as_item(), "dest": dest, "diff": diff, "reason": reason}
-        return atomic.atomic_write(
-            self.queue_dir / f"{memory.id}.json",
-            json.dumps(payload, indent=2),
-            root=self.root,
-            endpoint="queue/enqueue",
-            entity_id=memory.id,
-        )
+        with store_lock(self.root):
+            atomic.secure_dir(self.queue_dir)
+            payload = {"memory": memory.as_item(), "dest": dest, "diff": diff, "reason": reason}
+            return atomic.atomic_write(
+                self.queue_dir / f"{memory.id}.json",
+                json.dumps(payload, indent=2),
+                root=self.root,
+                endpoint="queue/enqueue",
+                entity_id=memory.id,
+            )
 
     def queue_list(self) -> list[dict]:
         if not self.queue_dir.exists():
@@ -204,11 +210,12 @@ class MarkdownStore(Store):
         return json.loads(path.read_text(encoding="utf-8"))
 
     def resolve_queue(self, memory_id: str) -> None:
-        src = self.queue_dir / f"{memory_id}.json"
-        if not src.exists():
-            return
-        done = atomic.secure_dir(self.queue_dir / "_done")
-        src.rename(done / src.name)
+        with store_lock(self.root):
+            src = self.queue_dir / f"{memory_id}.json"
+            if not src.exists():
+                return
+            done = atomic.secure_dir(self.queue_dir / "_done")
+            src.rename(done / src.name)
 
 
 def _render_body(memories: list[Memory]) -> str:

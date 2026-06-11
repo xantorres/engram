@@ -14,6 +14,8 @@ import tempfile
 import uuid
 from pathlib import Path
 
+from engram.core.locking import store_lock
+
 DIR_MODE = 0o700
 FILE_MODE = 0o600
 
@@ -100,15 +102,16 @@ def atomic_write(
 
 def restore_from_bak(token: str, *, root: str | Path) -> dict:
     """Undo a write by token, deleting the file if the write had created it."""
-    bak = _bak_dir(Path(root)) / f"{token}.bak"
-    if not bak.exists():
-        return {"ok": False, "error": "unknown undo token"}
-    record = json.loads(bak.read_text(encoding="utf-8"))
-    target = Path(record["path"])
-    if record["content"] is None:
-        if target.exists():
-            target.unlink()
-    else:
-        target.write_text(record["content"], encoding="utf-8")
-    secure_file(target)
-    return {"ok": True, "path": str(target)}
+    with store_lock(root):
+        bak = _bak_dir(Path(root)) / f"{token}.bak"
+        if not bak.exists():
+            return {"ok": False, "error": "unknown undo token"}
+        record = json.loads(bak.read_text(encoding="utf-8"))
+        target = Path(record["path"])
+        if record["content"] is None:
+            if target.exists():
+                target.unlink()
+        else:
+            target.write_text(record["content"], encoding="utf-8")
+        secure_file(target)
+        return {"ok": True, "path": str(target)}
