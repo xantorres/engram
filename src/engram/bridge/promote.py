@@ -7,10 +7,12 @@ default: :func:`apply` writes nothing unless ``autopromote`` is explicitly on.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 from dataclasses import dataclass, field
 
 from engram.core import dedup, tiers
+from engram.core.locking import store_lock
 from engram.core.schema import Memory, Status
 from engram.core.store import Store
 
@@ -90,25 +92,28 @@ def apply(
     if not autopromote:
         return result  # dry-run: report routes, change nothing
     today = today or dt.date.today()
-    for route in result.routes:
-        candidate = route.memory
-        if route.action == "append":
-            store.append_log(candidate)
-            store.update(
-                candidate.model_copy(
-                    update={
-                        "status": Status.promoted,
-                        "last_verified": today,
-                        "dest": "memory-log.md",
-                    }
+    root = getattr(store, "root", None)
+    lock = store_lock(root) if root is not None else contextlib.nullcontext()
+    with lock:
+        for route in result.routes:
+            candidate = route.memory
+            if route.action == "append":
+                store.append_log(candidate)
+                store.update(
+                    candidate.model_copy(
+                        update={
+                            "status": Status.promoted,
+                            "last_verified": today,
+                            "dest": "memory-log.md",
+                        }
+                    )
                 )
-            )
-        elif route.action == "queue":
-            escalated = candidate.model_copy(update={"risk_tier": tiers.TIER_CURATED})
-            store.update(escalated)
-            store.enqueue(escalated, dest="memory.md", reason=route.reason)
-        elif route.action == "skip":
-            store.update(candidate.model_copy(update={"status": Status.rejected}))
+            elif route.action == "queue":
+                escalated = candidate.model_copy(update={"risk_tier": tiers.TIER_CURATED})
+                store.update(escalated)
+                store.enqueue(escalated, dest="memory.md", reason=route.reason)
+            elif route.action == "skip":
+                store.update(candidate.model_copy(update={"status": Status.rejected}))
     result.applied = True
     return result
 
