@@ -1,13 +1,17 @@
-"""Advisory cross-process lock serialising writes to one store root.
+"""Advisory lock serialising writes to one store root - across threads and processes.
 
-A single OS-level ``flock`` guards every mutation so two engram processes (an MCP
-server and a CLI run, say) can't interleave a read-modify-write on the same
-Markdown store. The lock is advisory: only code that takes :func:`store_lock`
-is serialised - which is every mutator in :mod:`engram.core.store`.
+Every mutation in :mod:`engram.core.store` takes :func:`store_lock` so two writers
+can't interleave a read-modify-write on the same Markdown store. Two layers:
 
-Reentrancy is process-wide: a second ``flock(LOCK_EX)`` on a different fd for a
-file this process already holds self-deadlocks on macOS/BSD, so the OS lock is
-refcounted per resolved root and only touched at depth 0.
+* a per-root ``threading.RLock`` serialises threads within the process (the MCP
+  server dispatches sync tools off its event loop, so concurrent ``remember``
+  calls land on different threads) while staying reentrant for one thread;
+* an ``flock`` on a per-root ``.lock`` file serialises separate processes.
+
+``flock`` is tied to the open file description, not the process: a second
+``flock(LOCK_EX)`` on a different fd self-deadlocks within one process. So the OS
+lock is taken once, on the outermost entry of the owning thread, and released
+when that thread fully unwinds.
 """
 
 from __future__ import annotations
@@ -20,33 +24,47 @@ from contextlib import contextmanager
 from pathlib import Path
 
 _LOCK_MODE = 0o600
-_guard = threading.Lock()
-_held: dict[str, tuple[int, int]] = {}  # resolved root -> (fd, depth)
+_registry_guard = threading.Lock()
+
+
+class _RootLock:
+    def __init__(self) -> None:
+        self.tlock = threading.RLock()  # serialises threads, reentrant per thread
+        self.fd: int | None = None
+        self.depth = 0  # OS-lock depth for the thread currently holding tlock
+
+
+_locks: dict[str, _RootLock] = {}
+
+
+def _root_lock(key: str) -> _RootLock:
+    with _registry_guard:
+        rl = _locks.get(key)
+        if rl is None:
+            rl = _RootLock()
+            _locks[key] = rl
+        return rl
 
 
 @contextmanager
 def store_lock(root: str | os.PathLike) -> Iterator[None]:
-    """Hold an exclusive advisory lock on ``root`` for the duration of the block."""
-    key = str(Path(root).resolve())
-    with _guard:
-        entry = _held.get(key)
-        if entry is None:
-            lock_path = Path(root) / ".lock"
+    """Hold an exclusive lock on ``root`` for the duration of the block."""
+    root = Path(root)
+    rl = _root_lock(str(root.resolve()))
+    rl.tlock.acquire()
+    try:
+        if rl.depth == 0:
+            lock_path = root / ".lock"
             fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, _LOCK_MODE)
             os.chmod(lock_path, _LOCK_MODE)
             fcntl.flock(fd, fcntl.LOCK_EX)
-            _held[key] = (fd, 1)
-        else:
-            fd, depth = entry
-            _held[key] = (fd, depth + 1)
-    try:
+            rl.fd = fd
+        rl.depth += 1
         yield
     finally:
-        with _guard:
-            fd, depth = _held[key]
-            if depth > 1:
-                _held[key] = (fd, depth - 1)
-            else:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-                os.close(fd)
-                del _held[key]
+        rl.depth -= 1
+        if rl.depth == 0 and rl.fd is not None:
+            fcntl.flock(rl.fd, fcntl.LOCK_UN)
+            os.close(rl.fd)
+            rl.fd = None
+        rl.tlock.release()

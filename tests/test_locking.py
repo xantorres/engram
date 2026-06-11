@@ -2,6 +2,8 @@ import stat
 import subprocess
 import sys
 import textwrap
+import threading
+import time
 
 from engram.core.locking import store_lock
 
@@ -34,6 +36,26 @@ def test_store_lock_is_reentrant(tmp_path):
     # Released cleanly at depth 0 — a fresh acquire must still succeed.
     with store_lock(tmp_path):
         pass
+
+
+def test_store_lock_excludes_other_threads(tmp_path):
+    order = []
+
+    def worker(name):
+        with store_lock(tmp_path):
+            order.append(f"{name} enter")
+            time.sleep(0.2)
+            order.append(f"{name} exit")
+
+    a = threading.Thread(target=worker, args=("A",))
+    b = threading.Thread(target=worker, args=("B",))
+    a.start()
+    time.sleep(0.05)  # let A enter its critical section first
+    b.start()
+    a.join()
+    b.join()
+    # B must not enter until A has exited — no interleaving.
+    assert order == ["A enter", "A exit", "B enter", "B exit"]
 
 
 def test_lock_excludes_other_process(tmp_path):
