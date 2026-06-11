@@ -17,3 +17,8 @@ model = "local-model"
 # When false (default), the promotion bridge is dry-run only: it reports what it
 # would do but writes nothing. Flip to true once you trust its routing.
 autopromote = false
+
+# Optional: kinds to auto-append without human review, overriding the default
+# tier classification. Conflicts still go to the review queue regardless.
+# Override via ENGRAM_BRIDGE_KIND_ALLOWLIST=preference,tooling (comma-separated).
+# kind_allowlist = ["preference", "tooling", "project", "infra"]

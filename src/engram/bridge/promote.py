@@ -40,7 +40,13 @@ class PromotionResult:
         return [r for r in self.routes if r.action == "skip"]
 
 
-def plan(store: Store) -> PromotionResult:
+def plan(store: Store, *, kind_allowlist: list[str] | None = None) -> PromotionResult:
+    """Route pending candidates to append, queue, or skip.
+
+    kind_allowlist: when provided, any candidate whose kind is in the list is
+    appended directly (bypassing tier classification) unless a conflict exists.
+    None falls back to the standard AUTO_KINDS tier logic.
+    """
     promoted = store.list(status=Status.promoted)
     result = PromotionResult()
     for candidate in store.list(status=Status.pending):
@@ -49,15 +55,19 @@ def plan(store: Store) -> PromotionResult:
             result.routes.append(Route(candidate, "skip", f"already known ({against})"))
             continue
         conflict = verdict == "conflict"
-        tier = tiers.classify(candidate.kind, conflict=conflict)
-        if tiers.requires_confirm(tier):
-            if conflict:
-                reason = "conflict with existing memory"
-            else:
-                reason = f"{candidate.kind.value} needs review"
-            result.routes.append(Route(candidate, "queue", reason))
+        if kind_allowlist is not None and candidate.kind.value in kind_allowlist and not conflict:
+            result.routes.append(Route(candidate, "append", "kind in allowlist"))
         else:
-            result.routes.append(Route(candidate, "append", "low-risk"))
+            tier = tiers.classify(candidate.kind, conflict=conflict)
+            if tiers.requires_confirm(tier):
+                reason = (
+                    "conflict with existing memory"
+                    if conflict
+                    else f"{candidate.kind.value} needs review"
+                )
+                result.routes.append(Route(candidate, "queue", reason))
+            else:
+                result.routes.append(Route(candidate, "append", "low-risk"))
     return result
 
 
@@ -94,8 +104,16 @@ def apply(
     return result
 
 
-def run(store: Store, *, autopromote: bool, today: dt.date | None = None) -> PromotionResult:
-    return apply(store, plan(store), autopromote=autopromote, today=today)
+def run(
+    store: Store,
+    *,
+    autopromote: bool,
+    today: dt.date | None = None,
+    kind_allowlist: list[str] | None = None,
+) -> PromotionResult:
+    return apply(
+        store, plan(store, kind_allowlist=kind_allowlist), autopromote=autopromote, today=today
+    )
 
 
 def _dedup_against(candidate: Memory, promoted: list[Memory]) -> tuple[str, str | None]:

@@ -30,13 +30,16 @@ def test_harvest_session_claude_code(tmp_path):
     fixture = tmp_path / "session.jsonl"
     fixture.write_text("\n".join(json.dumps(r) for r in (user_turn, asst_turn)), encoding="utf-8")
 
-    canned = '{"candidates":[{"fact":"prefers pnpm","kind":"tooling","confidence":0.9}]}'
+    canned = (
+        '{"candidates":[{"fact":"prefers pnpm over npm for package management",'
+        '"kind":"tooling","confidence":0.9}]}'
+    )
     store = MarkdownStore(tmp_path / "store")
-    staged = harvest_session(
+    result = harvest_session(
         store, fixture, harness="claude-code", extractor=Stub(canned), min_confidence=0.5
     )
-    assert len(staged) == 1
-    assert store.get(staged[0].id).source == "harness:claude-code"
+    assert result["staged"] == 1
+    assert store.get(result["memories"][0].id).source.startswith("harness:claude-code")
 
 
 def test_harvest_session_caps_input(tmp_path):
@@ -70,3 +73,17 @@ def test_harvest_session_rejects_unknown_harness(tmp_path):
         raise AssertionError("expected ValueError")
     except ValueError:
         pass
+
+
+def test_harvest_session_returns_dict(tmp_path):
+    user_turn = {"message": {"role": "user", "content": "I prefer pnpm"}}
+    fixture = tmp_path / "session.jsonl"
+    fixture.write_text(json.dumps(user_turn), encoding="utf-8")
+    canned = (
+        '{"candidates":[{"fact":"prefers pnpm over npm for installs",'
+        '"kind":"tooling","confidence":0.9}]}'
+    )
+    store = MarkdownStore(tmp_path / "store")
+    result = harvest_session(store, fixture, harness="claude-code", extractor=Stub(canned))
+    assert isinstance(result, dict)
+    assert "staged" in result and "memories" in result
