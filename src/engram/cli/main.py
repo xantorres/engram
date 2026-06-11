@@ -6,8 +6,6 @@ Commands are registered as each subsystem comes online. Capture verbs
 
 from __future__ import annotations
 
-import os
-import tempfile
 from pathlib import Path
 
 import typer
@@ -36,6 +34,15 @@ def _store_for(config) -> MarkdownStore:
 
 def _store() -> MarkdownStore:
     return _store_for(load_config())
+
+
+def _auto_refresh(config, store: MarkdownStore) -> None:
+    """Rewrite the configured context blocks after a promoted-state change."""
+    if not (config.recall.auto_refresh and config.recall.refresh_targets):
+        return
+    from engram.recall.refresh import refresh_targets
+
+    refresh_targets(store, config.recall.refresh_targets, limit=config.recall.limit)
 
 
 @app.callback()
@@ -139,32 +146,15 @@ def gen_context(
 ) -> None:
     """Generate the engram memory block for AGENTS.md / CLAUDE.md."""
     from engram.recall.context import render_block, upsert_block
+    from engram.recall.refresh import atomic_replace
 
     block = render_block(_store().list(), limit=limit, project=project)
     if write is None:
         typer.echo(block)
         return
     existing = write.read_text(encoding="utf-8") if write.exists() else ""
-    _atomic_replace(write, upsert_block(existing, block))
+    atomic_replace(write, upsert_block(existing, block))
     typer.echo(f"updated {write}")
-
-
-def _atomic_replace(path: Path, content: str) -> None:
-    """Write ``content`` to ``path`` via a temp file + rename so an interrupted
-    run can never leave a half-written context file. The user's file is theirs:
-    its mode is preserved and no store audit/.bak machinery is written beside it.
-    """
-    mode = path.stat().st_mode if path.exists() else None
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(content)
-        if mode is not None:
-            os.chmod(tmp, mode & 0o777)
-        os.replace(tmp, path)
-    finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
 
 
 @app.command()
@@ -222,6 +212,7 @@ def sync(
     )
     if do_apply and config.autopromote:
         bridge.apply(store, result, autopromote=True)
+        _auto_refresh(config, store)
         mode = "applied"
     elif do_apply:
         mode = "dry-run (autopromote off in config)"
@@ -278,12 +269,14 @@ def promote(memory_id: str, confirm: bool = typer.Option(False, "--confirm")) ->
     """Approve a memory awaiting review (requires --confirm)."""
     from engram.bridge import review
 
-    store = _store()
+    config = load_config()
+    store = _store_for(config)
     # Show what is being approved. --confirm is otherwise a blind rubber-stamp on
     # an id, and ids arrive from scripts and suggestions as often as from reading.
     memory = store.get(memory_id)
     if memory is not None:
         typer.echo(f"{memory.id} [{memory.status.value}/{memory.kind.value}] {memory.fact}")
+
 
     result = review.approve(store, memory_id, confirm=confirm)
     if not result["ok"]:
@@ -292,6 +285,7 @@ def promote(memory_id: str, confirm: bool = typer.Option(False, "--confirm")) ->
     if result.get("warning"):
         typer.echo(f"warning: {result['warning']}")
     typer.echo(f"promoted {result['id']}")
+    _auto_refresh(config, store)
 
 
 @app.command()
@@ -314,7 +308,9 @@ def forget(memory_id: str) -> None:
     """Retract a promoted memory (marks it rejected, emits undo token)."""
     from engram.bridge import review
 
-    result = review.forget(_store(), memory_id)
+    config = load_config()
+    store = _store_for(config)
+    result = review.forget(store, memory_id)
     if not result["ok"]:
         typer.echo(result["error"])
         raise typer.Exit(1)
@@ -322,6 +318,7 @@ def forget(memory_id: str) -> None:
         f"removed {result['id']} from recall (history and audit may retain it)  "
         f"undo_token={result['undo_token']}"
     )
+    _auto_refresh(config, store)
 
 
 @app.command()

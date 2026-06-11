@@ -97,6 +97,76 @@ def test_migrate_projects_backfills_from_source(tmp_path, monkeypatch):
     assert "0 fact" in again.stdout
 
 
+def _enable_auto_refresh(monkeypatch, store_dir, target):
+    monkeypatch.setenv("ENGRAM_STORE", str(store_dir))
+    monkeypatch.setenv("ENGRAM_RECALL_AUTO_REFRESH", "true")
+    monkeypatch.setenv("ENGRAM_RECALL_REFRESH_TARGETS", str(target))
+    target.write_text("<!-- engram:begin -->\nold\n<!-- engram:end -->\n", encoding="utf-8")
+    os.chmod(target, 0o644)
+
+
+def test_auto_refresh_on_promote(tmp_path, monkeypatch):
+    store_dir = tmp_path / "store"
+    target = tmp_path / "AGENTS.md"
+    _enable_auto_refresh(monkeypatch, store_dir, target)
+    store = MarkdownStore(store_dir)
+    mem = store.add(Memory(fact="prefers ripgrep for searching code", kind=Kind.tooling))
+    store.enqueue(mem, dest="memory.md")
+
+    result = runner.invoke(app, ["promote", mem.id, "--confirm"])
+    assert result.exit_code == 0
+
+    text = target.read_text(encoding="utf-8")
+    assert "ripgrep" in text and "old" not in text
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+    # Refresh uses the user-file path, not store machinery: nothing littered beside it.
+    assert not (tmp_path / ".bak").exists()
+    assert not (tmp_path / "audit.jsonl").exists()
+
+
+def test_auto_refresh_on_forget(tmp_path, monkeypatch):
+    store_dir = tmp_path / "store"
+    target = tmp_path / "CLAUDE.md"
+    _enable_auto_refresh(monkeypatch, store_dir, target)
+    store = MarkdownStore(store_dir)
+    mem = store.add(Memory(fact="prefers ripgrep for searching code", status=Status.promoted))
+    # Seed the block with the fact so we can prove forget removes it.
+    runner.invoke(app, ["gen-context", "--write", str(target)])
+    assert "ripgrep" in target.read_text(encoding="utf-8")
+
+    result = runner.invoke(app, ["forget", mem.id])
+    assert result.exit_code == 0
+    assert "ripgrep" not in target.read_text(encoding="utf-8")
+
+
+def test_auto_refresh_on_sync_apply(tmp_path, monkeypatch):
+    store_dir = tmp_path / "store"
+    target = tmp_path / "AGENTS.md"
+    _enable_auto_refresh(monkeypatch, store_dir, target)
+    monkeypatch.setenv("ENGRAM_AUTOPROMOTE", "true")
+    store = MarkdownStore(store_dir)
+    store.add(Memory(fact="prefers fd over find for file search", kind=Kind.tooling))
+
+    result = runner.invoke(app, ["sync", "--apply"])
+    assert result.exit_code == 0
+    assert "fd over find" in target.read_text(encoding="utf-8")
+
+
+def test_no_auto_refresh_when_disabled(tmp_path, monkeypatch):
+    store_dir = tmp_path / "store"
+    target = tmp_path / "AGENTS.md"
+    monkeypatch.setenv("ENGRAM_STORE", str(store_dir))
+    monkeypatch.delenv("ENGRAM_RECALL_AUTO_REFRESH", raising=False)
+    monkeypatch.setenv("ENGRAM_RECALL_REFRESH_TARGETS", str(target))
+    original = "<!-- engram:begin -->\nold\n<!-- engram:end -->\n"
+    target.write_text(original, encoding="utf-8")
+    store = MarkdownStore(store_dir)
+    mem = store.add(Memory(fact="prefers ripgrep for searching code", status=Status.promoted))
+
+    runner.invoke(app, ["forget", mem.id])
+    assert target.read_text(encoding="utf-8") == original
+
+
 def test_forget_reports_truthful_wording(tmp_path, monkeypatch):
     store_dir = tmp_path / "store"
     monkeypatch.setenv("ENGRAM_STORE", str(store_dir))
