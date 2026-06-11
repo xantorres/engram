@@ -6,6 +6,8 @@ Commands are registered as each subsystem comes online. Capture verbs
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 import typer
@@ -116,8 +118,26 @@ def gen_context(
         typer.echo(block)
         return
     existing = write.read_text(encoding="utf-8") if write.exists() else ""
-    write.write_text(upsert_block(existing, block), encoding="utf-8")
+    _atomic_replace(write, upsert_block(existing, block))
     typer.echo(f"updated {write}")
+
+
+def _atomic_replace(path: Path, content: str) -> None:
+    """Write ``content`` to ``path`` via a temp file + rename so an interrupted
+    run can never leave a half-written context file. The user's file is theirs:
+    its mode is preserved and no store audit/.bak machinery is written beside it.
+    """
+    mode = path.stat().st_mode if path.exists() else None
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        if mode is not None:
+            os.chmod(tmp, mode & 0o777)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
 
 
 @app.command()
