@@ -30,3 +30,11 @@ def test_doctor_flags_conflicts():
     b = _promoted("My VAT number is 22222222B", mem_id="mem-0002", last_verified=seen)
     report = doctor([a, b], today=dt.date(2026, 6, 9))
     assert ("mem-0001", "mem-0002") in report["conflicts"]
+
+
+def test_doctor_skips_cross_project_conflicts():
+    seen = dt.date(2026, 6, 1)
+    a = _promoted("My VAT number is 11111111A", mem_id="mem-0001", last_verified=seen, project="a")
+    b = _promoted("My VAT number is 22222222B", mem_id="mem-0002", last_verified=seen, project="b")
+    report = doctor([a, b], today=dt.date(2026, 6, 9))
+    assert report["conflicts"] == []

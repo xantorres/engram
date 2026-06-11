@@ -202,7 +202,11 @@ def run(
 
 
 def _dedup_against(candidate: Memory, promoted: list[Memory]) -> tuple[str, str | None]:
+    # Only compare within the same project: an unscoped lexical match across two
+    # projects (e.g. two libraries used in different repos) is not a real conflict.
     for existing in promoted:
+        if existing.project != candidate.project:
+            continue
         verdict = dedup.compare(candidate.fact, existing.fact)
         if verdict in ("duplicate", "conflict"):
             return verdict, existing.id

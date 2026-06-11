@@ -41,6 +41,46 @@ def test_plan_queues_capture_flagged_candidate(tmp_path):
     assert result.routes[0].reason == "flagged for review at capture"
 
 
+def test_plan_skips_cross_project_conflict(tmp_path):
+    store = _store_with(
+        tmp_path,
+        Memory(
+            fact="My VAT number is 11111111A",
+            kind=Kind.tooling,
+            status=Status.promoted,
+            project="proj-a",
+        ),
+        Memory(
+            fact="My VAT number is 22222222B",
+            kind=Kind.tooling,
+            status=Status.pending,
+            project="proj-b",
+        ),
+    )
+    routes = {r.memory.fact: r for r in bridge.plan(store).routes}
+    assert routes["My VAT number is 22222222B"].action == "append"
+
+
+def test_plan_flags_same_project_conflict(tmp_path):
+    store = _store_with(
+        tmp_path,
+        Memory(
+            fact="My VAT number is 11111111A",
+            kind=Kind.tooling,
+            status=Status.promoted,
+            project="proj-a",
+        ),
+        Memory(
+            fact="My VAT number is 22222222B",
+            kind=Kind.tooling,
+            status=Status.pending,
+            project="proj-a",
+        ),
+    )
+    routes = {r.memory.fact: r for r in bridge.plan(store).routes}
+    assert routes["My VAT number is 22222222B"].action == "queue"
+
+
 def test_plan_skips_duplicates(tmp_path):
     store = MarkdownStore(tmp_path)
     store.add(Memory(fact="prefers pnpm over npm", kind=Kind.tooling, status=Status.promoted))

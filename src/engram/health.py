@@ -35,6 +35,8 @@ def doctor(memories: list[Memory], *, today: dt.date | None = None) -> dict:
             report["unverified"].append(memory.id)
     for i, first in enumerate(promoted):
         for second in promoted[i + 1 :]:
+            if first.project != second.project:
+                continue  # cross-project facts never conflict
             if compare(first.fact, second.fact) == "conflict":
                 report["conflicts"].append((first.id, second.id))
     return report
