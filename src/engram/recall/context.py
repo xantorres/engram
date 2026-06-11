@@ -14,8 +14,8 @@ BLOCK_BEGIN = "<!-- engram:begin -->"
 BLOCK_END = "<!-- engram:end -->"
 
 
-def render_block(memories: list[Memory], *, limit: int = 30) -> str:
-    items = rank(memories, limit=limit)
+def render_block(memories: list[Memory], *, limit: int = 30, project: str | None = None) -> str:
+    items = rank(memories, limit=limit, project=project)
     lines = [BLOCK_BEGIN, "## What engram remembers about you", ""]
     if not items:
         lines.append("_No memories yet._")

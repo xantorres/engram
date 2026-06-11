@@ -13,9 +13,16 @@ from engram.core.freshness import effective_confidence, is_stale
 from engram.core.schema import Memory, Status
 
 
-def recallable(memories: list[Memory], *, today: dt.date | None = None) -> list[Memory]:
+def recallable(
+    memories: list[Memory], *, today: dt.date | None = None, project: str | None = None
+) -> list[Memory]:
     today = today or dt.date.today()
-    return [m for m in memories if m.status == Status.promoted and not is_stale(m, today=today)]
+    pool = [m for m in memories if m.status == Status.promoted and not is_stale(m, today=today)]
+    if project is not None:
+        # Scoped recall keeps unscoped (global) facts so a project context still
+        # carries the user's universal preferences alongside its own.
+        pool = [m for m in pool if m.project == project or m.project is None]
+    return pool
 
 
 def rank(
@@ -24,12 +31,14 @@ def rank(
     *,
     limit: int = 20,
     today: dt.date | None = None,
+    project: str | None = None,
 ) -> list[Memory]:
     today = today or dt.date.today()
-    pool = recallable(memories, today=today)
+    pool = recallable(memories, today=today, project=project)
 
     def weight(memory: Memory) -> float:
         return effective_confidence(memory, today=today)
+
 
     if query:
         wanted = _tokens(query)

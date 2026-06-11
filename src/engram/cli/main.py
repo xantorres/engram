@@ -135,11 +135,12 @@ def recall(
 def gen_context(
     write: Path = typer.Option(None, "--write", "-w"),
     limit: int = typer.Option(30, "--limit", "-n"),
+    project: str = typer.Option(None, "--project", "-p"),
 ) -> None:
     """Generate the engram memory block for AGENTS.md / CLAUDE.md."""
     from engram.recall.context import render_block, upsert_block
 
-    block = render_block(_store().list(), limit=limit)
+    block = render_block(_store().list(), limit=limit, project=project)
     if write is None:
         typer.echo(block)
         return

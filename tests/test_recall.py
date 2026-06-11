@@ -17,6 +17,28 @@ def test_recallable_excludes_pending_and_stale():
     assert {m.fact for m in out} == {"a"}
 
 
+def test_recallable_project_scope_includes_globals():
+    proj_a = _promoted("a fact", project="proj-a")
+    proj_b = _promoted("b fact", project="proj-b")
+    global_fact = _promoted("global fact", project=None)
+    out = recallable([proj_a, proj_b, global_fact], project="proj-a")
+    assert {m.fact for m in out} == {"a fact", "global fact"}
+
+
+def test_rank_project_scope():
+    proj_a = _promoted("scoped fact one", project="proj-a", confidence=0.9)
+    proj_b = _promoted("scoped fact two", project="proj-b", confidence=0.9)
+    ranked = rank([proj_a, proj_b], project="proj-a")
+    assert [m.fact for m in ranked] == ["scoped fact one"]
+
+
+def test_render_block_project_scope():
+    proj_a = _promoted("alpha fact", kind=Kind.tooling, project="proj-a")
+    proj_b = _promoted("beta fact", kind=Kind.tooling, project="proj-b")
+    block = render_block([proj_a, proj_b], project="proj-a")
+    assert "alpha fact" in block and "beta fact" not in block
+
+
 def test_rank_orders_by_confidence():
     ranked = rank([_promoted("low", confidence=0.3), _promoted("high", confidence=0.9)])
     assert [m.fact for m in ranked] == ["high", "low"]
