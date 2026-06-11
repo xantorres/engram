@@ -63,6 +63,7 @@ class Memory(BaseModel):
     status: Status = Status.pending
     risk_tier: int = Field(default=1, ge=1, le=3)
     dest: str | None = None
+    project: str | None = None
 
     def as_item(self) -> dict:
         """A JSON-safe dict for the registry frontmatter / JSONL buffers."""

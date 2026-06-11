@@ -32,3 +32,17 @@ def test_roundtrip_item():
 def test_confidence_bounds():
     with pytest.raises(ValueError):
         Memory(fact="x", confidence=1.5)
+
+
+def test_project_defaults_none_and_roundtrips():
+    m = Memory(fact="x")
+    assert m.project is None
+    scoped = Memory(id="mem-0001", fact="uses uv", project="engram")
+    item = scoped.as_item()
+    assert item["project"] == "engram"
+    assert Memory.from_item(item) == scoped
+
+
+def test_legacy_item_without_project_loads():
+    legacy = {"id": "mem-0001", "fact": "old fact", "kind": "tooling"}
+    assert Memory.from_item(legacy).project is None
