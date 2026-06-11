@@ -11,7 +11,7 @@ import contextlib
 import datetime as dt
 from dataclasses import dataclass, field
 
-from engram.core import dedup, tiers
+from engram.core import atomic, dedup, tiers
 from engram.core.locking import store_lock
 from engram.core.schema import Memory, Status
 from engram.core.store import Store
@@ -98,16 +98,23 @@ def apply(
         for route in result.routes:
             candidate = route.memory
             if route.action == "append":
-                store.append_log(candidate)
-                store.update(
-                    candidate.model_copy(
-                        update={
-                            "status": Status.promoted,
-                            "last_verified": today,
-                            "dest": "memory-log.md",
-                        }
+                # Log first, then flip the registry. If the registry write fails,
+                # undo the log append so recall and the log can't diverge.
+                log_result = store.append_log(candidate)
+                try:
+                    store.update(
+                        candidate.model_copy(
+                            update={
+                                "status": Status.promoted,
+                                "last_verified": today,
+                                "dest": "memory-log.md",
+                            }
+                        )
                     )
-                )
+                except Exception:
+                    if root is not None:
+                        atomic.restore_from_bak(log_result["undo_token"], root=root)
+                    raise
             elif route.action == "queue":
                 escalated = candidate.model_copy(update={"risk_tier": tiers.TIER_CURATED})
                 store.update(escalated)
