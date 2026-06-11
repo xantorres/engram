@@ -54,6 +54,11 @@ def test_harvest_returns_empty_on_garbage():
     assert harvest("t", Stub("not json at all")) == []
 
 
+def test_harvest_normalizes_multiline_fact():
+    raw = '{"candidates":[{"fact":"first line\\nsecond line","kind":"tooling","confidence":0.9}]}'
+    assert harvest("t", Stub(raw))[0].fact == "first line second line"
+
+
 def test_parse_multiple_json_objects_picks_candidates():
     from engram.extract.harvest import _parse
 

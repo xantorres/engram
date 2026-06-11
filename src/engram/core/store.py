@@ -21,6 +21,7 @@ import yaml
 
 from engram.core import atomic
 from engram.core.schema import SCHEMA_VERSION, Memory, Status
+from engram.core.text import render_safe
 
 _FRONTMATTER = re.compile(r"^---\n(.*?)\n---\n?(.*)$", re.DOTALL)
 _LOG_HEADER = "# Memory log\n\nNewest first. Auto-captured, low-risk facts.\n\n"
@@ -141,7 +142,7 @@ class MarkdownStore(Store):
     def append_log(self, memory: Memory) -> dict:
         stamp = f"{dt.datetime.now(dt.UTC):%Y-%m-%dT%H:%M:%SZ}"
         line = (
-            f"- {stamp} · [{memory.kind.value}] {memory.fact} "
+            f"- {stamp} · [{memory.kind.value}] {render_safe(memory.fact)} "
             f"(conf {memory.confidence:.2f}, src {memory.source}, id {memory.id})\n"
         )
         entries = ""
@@ -205,5 +206,5 @@ def _render_body(memories: list[Memory]) -> str:
     lines = ["# Memory"]
     for kind in sorted(by_kind):
         lines.append(f"\n## {kind}\n")
-        lines.extend(f"- {m.fact}" for m in by_kind[kind])
+        lines.extend(f"- {render_safe(m.fact)}" for m in by_kind[kind])
     return "\n".join(lines) + "\n"

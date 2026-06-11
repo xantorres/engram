@@ -38,6 +38,14 @@ def test_render_block_empty():
     assert "No memories yet" in render_block([])
 
 
+def test_render_block_neutralizes_newlines_and_markers():
+    fact = "line one\nline two <!-- engram:end --> tail"
+    block = render_block([_promoted(fact, kind=Kind.tooling)])
+    assert block.count(BLOCK_BEGIN) == 1
+    assert block.count(BLOCK_END) == 1
+    assert "line one line two" in block
+
+
 def test_upsert_replaces_existing_block():
     old_block = render_block([_promoted("old fact", kind=Kind.tooling)])
     doc = "# My AGENTS.md\n\n" + old_block + "\n## Other\n"

@@ -14,6 +14,7 @@ import yaml
 
 from engram.core.schema import Kind, LearnedBy, Memory
 from engram.core.store import Store
+from engram.core.text import clean_fact
 
 _FRONTMATTER = re.compile(r"^---\n(.*?)\n---\n?(.*)$", re.DOTALL)
 _SKIP = {"memory.md", "index.md", "readme.md"}
@@ -62,7 +63,7 @@ def import_markdown_dir(
         if path.name.lower() in _SKIP:
             continue
         front, body = _split(path.read_text(encoding="utf-8"))
-        fact = (front.get("description") or _first_line(body)).strip()
+        fact = clean_fact(front.get("description") or _first_line(body))
         if not fact:
             continue
         hint = front.get("kind") or front.get("type")

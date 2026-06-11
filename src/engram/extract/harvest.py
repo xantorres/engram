@@ -12,6 +12,7 @@ from typing import Protocol
 
 from engram.core import tiers
 from engram.core.schema import Kind, LearnedBy, Memory
+from engram.core.text import clean_fact
 
 _SYSTEM = """You extract durable facts about the USER from a transcript.
 Return STRICT JSON: {"candidates":[{"fact": string, "kind": string, "confidence": number}]}
@@ -39,7 +40,7 @@ def harvest(
     candidates = _parse(extractor.complete(_SYSTEM, text))
     out: list[Memory] = []
     for candidate in candidates:
-        fact = str(candidate.get("fact", "")).strip()
+        fact = clean_fact(str(candidate.get("fact", "")))
         confidence = _clamp(candidate.get("confidence", 0.5))
         if not fact or confidence < min_confidence:
             continue

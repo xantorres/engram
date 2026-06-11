@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from engram.core.schema import Kind, LearnedBy, Memory
 from engram.core.store import Store
+from engram.core.text import clean_fact
 
 
 def remember(
@@ -20,7 +21,7 @@ def remember(
 ) -> Memory:
     return store.add(
         Memory(
-            fact=fact.strip(),
+            fact=clean_fact(fact),
             kind=kind,
             confidence=confidence,
             learned_by=LearnedBy.remember,
