@@ -214,7 +214,10 @@ def forget(memory_id: str) -> None:
     if not result["ok"]:
         typer.echo(result["error"])
         raise typer.Exit(1)
-    typer.echo(f"forgotten {result['id']}  undo_token={result['undo_token']}")
+    typer.echo(
+        f"removed {result['id']} from recall (history and audit may retain it)  "
+        f"undo_token={result['undo_token']}"
+    )
 
 
 @app.command()
