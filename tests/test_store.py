@@ -1,8 +1,31 @@
 import os
 import stat
 
+import pytest
+
 from engram.core.schema import Kind, Memory, Status
-from engram.core.store import MarkdownStore
+from engram.core.store import MarkdownStore, StoreFormatError
+
+
+def test_malformed_frontmatter_raises_store_format_error(tmp_path):
+    (tmp_path / "memory.md").write_text("no frontmatter here", encoding="utf-8")
+    store = MarkdownStore(tmp_path)
+    with pytest.raises(StoreFormatError):
+        store.list()
+
+
+def test_add_refuses_to_overwrite_malformed_registry(tmp_path):
+    registry = tmp_path / "memory.md"
+    original = "totally not a valid store file"
+    registry.write_text(original, encoding="utf-8")
+    store = MarkdownStore(tmp_path)
+    with pytest.raises(StoreFormatError):
+        store.add(Memory(fact="new", kind=Kind.tooling))
+    assert registry.read_text(encoding="utf-8") == original
+
+
+def test_missing_registry_still_returns_empty(tmp_path):
+    assert MarkdownStore(tmp_path).list() == []
 
 
 def test_store_init_tightens_existing_modes(tmp_path):

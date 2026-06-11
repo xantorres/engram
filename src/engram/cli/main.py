@@ -11,9 +11,10 @@ from pathlib import Path
 import typer
 
 from engram import __version__
+from engram.config import ConfigError
 from engram.config import load as load_config
 from engram.core.schema import Kind, Status
-from engram.core.store import MarkdownStore
+from engram.core.store import MarkdownStore, StoreFormatError
 
 app = typer.Typer(
     name="engram",
@@ -244,7 +245,11 @@ def import_(directory: Path) -> None:
 
 
 def main() -> None:
-    app()
+    try:
+        app()
+    except (StoreFormatError, ConfigError) as e:
+        typer.echo(str(e), err=True)
+        raise SystemExit(1) from e
 
 
 if __name__ == "__main__":
