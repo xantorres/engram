@@ -30,6 +30,13 @@ def test_plan_allowlist_ignores_curated_kinds(tmp_path):
     assert result.routes[0].action == "queue"
 
 
+def test_plan_queues_capture_flagged_candidate(tmp_path):
+    store = _store_with(tmp_path, Memory(fact="something odd", kind=Kind.preference, risk_tier=3))
+    result = bridge.plan(store)
+    assert result.routes[0].action == "queue"
+    assert result.routes[0].reason == "flagged for review at capture"
+
+
 def test_plan_skips_duplicates(tmp_path):
     store = MarkdownStore(tmp_path)
     store.add(Memory(fact="prefers pnpm over npm", kind=Kind.tooling, status=Status.promoted))

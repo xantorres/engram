@@ -8,6 +8,7 @@ human approves sensitive writes, an agent does not.
 from __future__ import annotations
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 
 from engram.capture.active import remember as _remember
 from engram.config import load as load_config
@@ -26,8 +27,9 @@ def _store() -> MarkdownStore:
 def _kind(value: str) -> Kind:
     try:
         return Kind(value.strip().lower())
-    except ValueError:
-        return Kind.preference
+    except ValueError as e:
+        valid = ", ".join(k.value for k in Kind)
+        raise ToolError(f"unknown kind {value!r}; valid kinds: {valid}") from e
 
 
 @mcp.tool

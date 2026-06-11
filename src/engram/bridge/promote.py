@@ -56,10 +56,13 @@ def plan(store: Store, *, kind_allowlist: list[str] | None = None) -> PromotionR
             result.routes.append(Route(candidate, "skip", f"already known ({against})"))
             continue
         conflict = verdict == "conflict"
-        if (
+        if candidate.risk_tier >= tiers.TIER_CURATED:
+            result.routes.append(Route(candidate, "queue", "flagged for review at capture"))
+        elif (
             kind_allowlist is not None
             and candidate.kind.value in kind_allowlist
             and candidate.kind not in tiers.CURATED_KINDS
+            and candidate.risk_tier < tiers.TIER_CURATED
             and not conflict
         ):
             result.routes.append(Route(candidate, "append", "kind in allowlist"))
