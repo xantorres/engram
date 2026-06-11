@@ -43,10 +43,35 @@ def test_harvest_filters_below_min_confidence():
     assert harvest("t", Stub(raw), min_confidence=0.5) == []
 
 
-def test_harvest_unknown_kind_falls_back():
+def test_harvest_unknown_kind_flags_curated():
     raw = '{"candidates":[{"fact":"y","kind":"banana","confidence":0.9}]}'
-    assert harvest("t", Stub(raw))[0].kind == Kind.preference
+    mem = harvest("t", Stub(raw))[0]
+    assert mem.kind == Kind.preference
+    assert mem.risk_tier == 3
 
 
 def test_harvest_returns_empty_on_garbage():
     assert harvest("t", Stub("not json at all")) == []
+
+
+def test_harvest_normalizes_multiline_fact():
+    raw = '{"candidates":[{"fact":"first line\\nsecond line","kind":"tooling","confidence":0.9}]}'
+    assert harvest("t", Stub(raw))[0].fact == "first line second line"
+
+
+def test_parse_multiple_json_objects_picks_candidates():
+    from engram.extract.harvest import _parse
+
+    raw = '{"note": "ignore me"}\n{"candidates":[{"fact":"a","kind":"tooling","confidence":0.9}]}'
+    assert [c["fact"] for c in _parse(raw)] == ["a"]
+
+
+def test_parse_prose_wrapped_json():
+    from engram.extract.harvest import _parse
+
+    raw = (
+        "Sure! Here is the JSON:\n"
+        '{"candidates":[{"fact":"b","kind":"infra"}]}\n'
+        "Hope that helps."
+    )
+    assert [c["fact"] for c in _parse(raw)] == ["b"]

@@ -14,16 +14,30 @@ from __future__ import annotations
 import abc
 import datetime as dt
 import json
+import os
 import re
 from pathlib import Path
 
 import yaml
+from pydantic import ValidationError
 
 from engram.core import atomic
+from engram.core.locking import store_lock
 from engram.core.schema import SCHEMA_VERSION, Memory, Status
+from engram.core.text import render_safe
 
 _FRONTMATTER = re.compile(r"^---\n(.*?)\n---\n?(.*)$", re.DOTALL)
 _LOG_HEADER = "# Memory log\n\nNewest first. Auto-captured, low-risk facts.\n\n"
+_MEM_ID_RE = re.compile(r"^mem-\d+$")
+
+
+def _valid_id(memory_id: str) -> bool:
+    """Only generated ``mem-<digits>`` ids may build a queue path - no traversal."""
+    return bool(_MEM_ID_RE.match(memory_id))
+
+
+class StoreFormatError(RuntimeError):
+    """The registry exists but is unreadable; engram refuses to read or overwrite it."""
 
 
 class Store(abc.ABC):
@@ -60,19 +74,39 @@ class Store(abc.ABC):
 class MarkdownStore(Store):
     def __init__(self, root: str | Path):
         self.root = Path(root)
-        self.root.mkdir(parents=True, exist_ok=True)
+        atomic.secure_dir(self.root)
         self.registry = self.root / "memory.md"
         self.log = self.root / "memory-log.md"
         self.queue_dir = self.root / "queue"
+        self._chmod_existing()
+
+    def _chmod_existing(self) -> None:
+        """Tighten any pre-existing store artifacts to 0700 dirs / 0600 files.
+
+        Idempotent and cheap; runs on every init so a store created before this
+        hardening (or touched by another tool) is migrated in place.
+        """
+        for dirpath, _dirs, filenames in os.walk(self.root):
+            os.chmod(dirpath, atomic.DIR_MODE)
+            for name in filenames:
+                try:
+                    os.chmod(Path(dirpath) / name, atomic.FILE_MODE)
+                except OSError:
+                    pass
 
     def _load(self) -> list[Memory]:
         if not self.registry.exists():
             return []
         match = _FRONTMATTER.match(self.registry.read_text(encoding="utf-8"))
         if not match:
-            return []
-        data = yaml.safe_load(match.group(1)) or {}
-        return [Memory.from_item(item) for item in data.get("items", [])]
+            raise StoreFormatError(f"{self.registry} is missing YAML frontmatter")
+        try:
+            data = yaml.safe_load(match.group(1)) or {}
+            if not isinstance(data, dict):
+                raise StoreFormatError(f"{self.registry} frontmatter is not a mapping")
+            return [Memory.from_item(item) for item in (data.get("items") or [])]
+        except (yaml.YAMLError, ValidationError) as e:
+            raise StoreFormatError(f"{self.registry} is malformed: {e}") from e
 
     def _save(self, memories: list[Memory]) -> dict:
         front = {
@@ -98,12 +132,15 @@ class MarkdownStore(Store):
         return f"mem-{(max(nums) + 1) if nums else 1:04d}"
 
     def add(self, memory: Memory) -> Memory:
-        memories = self._load()
-        if not memory.id:
-            memory = memory.model_copy(update={"id": self._next_id(memories)})
-        memories.append(memory)
-        self._save(memories)
-        return memory
+        with store_lock(self.root):
+            memories = self._load()
+            if not memory.id:
+                memory = memory.model_copy(update={"id": self._next_id(memories)})
+            elif not _valid_id(memory.id):
+                raise ValueError(f"refusing to persist non-generated memory id: {memory.id!r}")
+            memories.append(memory)
+            self._save(memories)
+            return memory
 
     def get(self, memory_id: str) -> Memory | None:
         return next((m for m in self._load() if m.id == memory_id), None)
@@ -115,13 +152,14 @@ class MarkdownStore(Store):
         return memories
 
     def update(self, memory: Memory) -> Memory:
-        memories = self._load()
-        for i, existing in enumerate(memories):
-            if existing.id == memory.id:
-                memories[i] = memory
-                self._save(memories)
-                return memory
-        raise KeyError(f"unknown memory id: {memory.id}")
+        with store_lock(self.root):
+            memories = self._load()
+            for i, existing in enumerate(memories):
+                if existing.id == memory.id:
+                    memories[i] = memory
+                    self._save(memories)
+                    return memory
+            raise KeyError(f"unknown memory id: {memory.id}")
 
     def update_with_token(self, memory: Memory) -> tuple[Memory, dict]:
         """Update a memory and return (memory, atomic_write_result).
@@ -130,44 +168,49 @@ class MarkdownStore(Store):
         write — callers that need to surface undo capability use this instead of
         update() so they receive the token from the actual file mutation.
         """
-        memories = self._load()
-        for i, existing in enumerate(memories):
-            if existing.id == memory.id:
-                memories[i] = memory
-                write_result = self._save(memories)
-                return memory, write_result
-        raise KeyError(f"unknown memory id: {memory.id}")
+        with store_lock(self.root):
+            memories = self._load()
+            for i, existing in enumerate(memories):
+                if existing.id == memory.id:
+                    memories[i] = memory
+                    write_result = self._save(memories)
+                    return memory, write_result
+            raise KeyError(f"unknown memory id: {memory.id}")
 
     def append_log(self, memory: Memory) -> dict:
-        stamp = f"{dt.datetime.now(dt.UTC):%Y-%m-%dT%H:%M:%SZ}"
-        line = (
-            f"- {stamp} · [{memory.kind.value}] {memory.fact} "
-            f"(conf {memory.confidence:.2f}, src {memory.source}, id {memory.id})\n"
-        )
-        entries = ""
-        if self.log.exists():
-            text = self.log.read_text(encoding="utf-8")
-            entries = text[len(_LOG_HEADER) :] if text.startswith(_LOG_HEADER) else text
-        return atomic.atomic_write(
-            self.log,
-            _LOG_HEADER + line + entries,
-            root=self.root,
-            endpoint="memory/append",
-            entity_id=memory.id,
-        )
+        with store_lock(self.root):
+            stamp = f"{dt.datetime.now(dt.UTC):%Y-%m-%dT%H:%M:%SZ}"
+            line = (
+                f"- {stamp} · [{memory.kind.value}] {render_safe(memory.fact)} "
+                f"(conf {memory.confidence:.2f}, src {memory.source}, id {memory.id})\n"
+            )
+            entries = ""
+            if self.log.exists():
+                text = self.log.read_text(encoding="utf-8")
+                entries = text[len(_LOG_HEADER) :] if text.startswith(_LOG_HEADER) else text
+            return atomic.atomic_write(
+                self.log,
+                _LOG_HEADER + line + entries,
+                root=self.root,
+                endpoint="memory/append",
+                entity_id=memory.id,
+            )
 
     def enqueue(
         self, memory: Memory, *, dest: str | None = None, diff: str = "", reason: str = ""
     ) -> dict:
-        self.queue_dir.mkdir(parents=True, exist_ok=True)
-        payload = {"memory": memory.as_item(), "dest": dest, "diff": diff, "reason": reason}
-        return atomic.atomic_write(
-            self.queue_dir / f"{memory.id}.json",
-            json.dumps(payload, indent=2),
-            root=self.root,
-            endpoint="queue/enqueue",
-            entity_id=memory.id,
-        )
+        with store_lock(self.root):
+            if not _valid_id(memory.id):
+                raise ValueError(f"refusing to enqueue invalid memory id: {memory.id!r}")
+            atomic.secure_dir(self.queue_dir)
+            payload = {"memory": memory.as_item(), "dest": dest, "diff": diff, "reason": reason}
+            return atomic.atomic_write(
+                self.queue_dir / f"{memory.id}.json",
+                json.dumps(payload, indent=2),
+                root=self.root,
+                endpoint="queue/enqueue",
+                entity_id=memory.id,
+            )
 
     def queue_list(self) -> list[dict]:
         if not self.queue_dir.exists():
@@ -176,23 +219,30 @@ class MarkdownStore(Store):
         for path in sorted(self.queue_dir.glob("*.json")):
             try:
                 items.append(json.loads(path.read_text(encoding="utf-8")))
-            except json.JSONDecodeError:
-                continue
+            except json.JSONDecodeError as e:
+                raise StoreFormatError(f"{path} is malformed: {e}") from e
         return items
 
     def queue_get(self, memory_id: str) -> dict | None:
+        if not _valid_id(memory_id):
+            return None
         path = self.queue_dir / f"{memory_id}.json"
         if not path.exists():
             return None
-        return json.loads(path.read_text(encoding="utf-8"))
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            raise StoreFormatError(f"{path} is malformed: {e}") from e
 
     def resolve_queue(self, memory_id: str) -> None:
-        src = self.queue_dir / f"{memory_id}.json"
-        if not src.exists():
-            return
-        done = self.queue_dir / "_done"
-        done.mkdir(parents=True, exist_ok=True)
-        src.rename(done / src.name)
+        with store_lock(self.root):
+            if not _valid_id(memory_id):
+                return
+            src = self.queue_dir / f"{memory_id}.json"
+            if not src.exists():
+                return
+            done = atomic.secure_dir(self.queue_dir / "_done")
+            src.rename(done / src.name)
 
 
 def _render_body(memories: list[Memory]) -> str:
@@ -205,5 +255,5 @@ def _render_body(memories: list[Memory]) -> str:
     lines = ["# Memory"]
     for kind in sorted(by_kind):
         lines.append(f"\n## {kind}\n")
-        lines.extend(f"- {m.fact}" for m in by_kind[kind])
+        lines.extend(f"- {render_safe(m.fact)}" for m in by_kind[kind])
     return "\n".join(lines) + "\n"

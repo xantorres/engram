@@ -38,12 +38,18 @@ Coding agents forget everything between sessions. Workarounds exist, but each is
 
 ## Quickstart
 
-```bash
-uv tool install engram          # or: pipx install engram
+Not yet on PyPI — install from source:
 
-engram remember "I prefer pnpm over npm"
-engram recall                   # list what engram knows
-engram serve                    # start the MCP server for your agents
+```bash
+uv tool install git+https://github.com/xantorres/engram
+# or: pipx install git+https://github.com/xantorres/engram
+# or from a clone: uv tool install .
+
+engram remember "I prefer pnpm over npm"    # stage a fact (pending review)
+engram list --status pending                # see what's staged
+ENGRAM_AUTOPROMOTE=true engram sync --apply  # promote the low-risk ones
+engram recall                               # recall promoted memories
+engram serve                                # start the MCP server for your agents
 ```
 
 Wire it into an agent (Codex shown):
@@ -80,7 +86,7 @@ It federates capture across your agents, gates sensitive writes behind your appr
 - [Quickstart](examples/quickstart.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Security and privacy](docs/SECURITY.md)
-- [Adapters](adapters/README.md)
+- [Adapters](https://github.com/xantorres/engram/tree/main/adapters)
 
 ## License
 

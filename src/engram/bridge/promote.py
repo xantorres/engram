@@ -7,12 +7,14 @@ default: :func:`apply` writes nothing unless ``autopromote`` is explicitly on.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 from dataclasses import dataclass, field
 
-from engram.core import dedup, tiers
+from engram.core import atomic, dedup, tiers
+from engram.core.locking import store_lock
 from engram.core.schema import Memory, Status
-from engram.core.store import Store
+from engram.core.store import MarkdownStore, Store
 
 
 @dataclass
@@ -43,9 +45,10 @@ class PromotionResult:
 def plan(store: Store, *, kind_allowlist: list[str] | None = None) -> PromotionResult:
     """Route pending candidates to append, queue, or skip.
 
-    kind_allowlist: when provided, any candidate whose kind is in the list is
-    appended directly (bypassing tier classification) unless a conflict exists.
-    None falls back to the standard AUTO_KINDS tier logic.
+    kind_allowlist: when provided, a candidate whose non-curated kind is in the
+    list is appended directly (bypassing tier classification) unless a conflict
+    exists. Curated kinds always fall through to classification and queue for
+    review, regardless of the allowlist. None falls back to standard tier logic.
     """
     promoted = store.list(status=Status.promoted)
     result = PromotionResult()
@@ -55,7 +58,15 @@ def plan(store: Store, *, kind_allowlist: list[str] | None = None) -> PromotionR
             result.routes.append(Route(candidate, "skip", f"already known ({against})"))
             continue
         conflict = verdict == "conflict"
-        if kind_allowlist is not None and candidate.kind.value in kind_allowlist and not conflict:
+        if candidate.risk_tier >= tiers.TIER_CURATED:
+            result.routes.append(Route(candidate, "queue", "flagged for review at capture"))
+        elif (
+            kind_allowlist is not None
+            and candidate.kind.value in kind_allowlist
+            and candidate.kind not in tiers.CURATED_KINDS
+            and candidate.risk_tier < tiers.TIER_CURATED
+            and not conflict
+        ):
             result.routes.append(Route(candidate, "append", "kind in allowlist"))
         else:
             tier = tiers.classify(candidate.kind, conflict=conflict)
@@ -81,25 +92,48 @@ def apply(
     if not autopromote:
         return result  # dry-run: report routes, change nothing
     today = today or dt.date.today()
-    for route in result.routes:
-        candidate = route.memory
-        if route.action == "append":
-            store.append_log(candidate)
-            store.update(
-                candidate.model_copy(
-                    update={
-                        "status": Status.promoted,
-                        "last_verified": today,
-                        "dest": "memory-log.md",
-                    }
-                )
-            )
-        elif route.action == "queue":
-            escalated = candidate.model_copy(update={"risk_tier": tiers.TIER_CURATED})
-            store.update(escalated)
-            store.enqueue(escalated, dest="memory.md", reason=route.reason)
-        elif route.action == "skip":
-            store.update(candidate.model_copy(update={"status": Status.rejected}))
+    root = getattr(store, "root", None)
+    lock = store_lock(root) if root is not None else contextlib.nullcontext()
+    with lock:
+        for route in result.routes:
+            candidate = route.memory
+            if route.action == "append":
+                # Log first, then flip the registry. If the registry write fails,
+                # undo the log append so recall and the log can't diverge.
+                log_result = store.append_log(candidate)
+                try:
+                    store.update(
+                        candidate.model_copy(
+                            update={
+                                "status": Status.promoted,
+                                "last_verified": today,
+                                "dest": "memory-log.md",
+                            }
+                        )
+                    )
+                except Exception:
+                    if root is not None:
+                        atomic.restore_from_bak(log_result["undo_token"], root=root)
+                    raise
+            elif route.action == "queue":
+                # Escalate the registry, then file the review item. If the queue
+                # write fails, undo the escalation so a sensitive fact is never
+                # left pending-but-invisible to review.
+                escalated = candidate.model_copy(update={"risk_tier": tiers.TIER_CURATED})
+                if isinstance(store, MarkdownStore):
+                    _, write_result = store.update_with_token(escalated)
+                    undo_token = write_result["undo_token"]
+                else:
+                    store.update(escalated)
+                    undo_token = None
+                try:
+                    store.enqueue(escalated, dest="memory.md", reason=route.reason)
+                except Exception:
+                    if undo_token is not None and root is not None:
+                        atomic.restore_from_bak(undo_token, root=root)
+                    raise
+            elif route.action == "skip":
+                store.update(candidate.model_copy(update={"status": Status.rejected}))
     result.applied = True
     return result
 

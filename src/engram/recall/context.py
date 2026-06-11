@@ -7,6 +7,7 @@ without disturbing the rest of the user's context file.
 from __future__ import annotations
 
 from engram.core.schema import Memory
+from engram.core.text import render_safe
 from engram.recall.rank import rank
 
 BLOCK_BEGIN = "<!-- engram:begin -->"
@@ -24,7 +25,7 @@ def render_block(memories: list[Memory], *, limit: int = 30) -> str:
             by_kind.setdefault(memory.kind.value, []).append(memory)
         for kind in sorted(by_kind):
             lines.append(f"**{kind}**")
-            lines.extend(f"- {memory.fact}" for memory in by_kind[kind])
+            lines.extend(f"- {render_safe(memory.fact)}" for memory in by_kind[kind])
             lines.append("")
     lines.append(BLOCK_END)
     return "\n".join(lines).rstrip() + "\n"

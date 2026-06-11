@@ -34,6 +34,9 @@ dev = ["pytest>=8", "ruff>=0.6"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/engram"]
 
+[tool.hatch.build.targets.sdist]
+only-include = ["src", "tests", "docs", "examples"]
+
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
