@@ -95,6 +95,12 @@ def test_add_allocates_id_and_persists(tmp_path):
     assert reloaded.get("mem-0001").fact == "prefers pnpm"
 
 
+def test_add_rejects_non_generated_id(tmp_path):
+    store = MarkdownStore(tmp_path)
+    with pytest.raises(ValueError):
+        store.add(Memory(id="../evil", fact="x", kind=Kind.tooling))
+
+
 def test_ids_are_monotonic(tmp_path):
     store = MarkdownStore(tmp_path)
     a = store.add(Memory(fact="a"))
