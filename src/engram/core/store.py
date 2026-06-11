@@ -217,8 +217,8 @@ class MarkdownStore(Store):
         for path in sorted(self.queue_dir.glob("*.json")):
             try:
                 items.append(json.loads(path.read_text(encoding="utf-8")))
-            except json.JSONDecodeError:
-                continue
+            except json.JSONDecodeError as e:
+                raise StoreFormatError(f"{path} is malformed: {e}") from e
         return items
 
     def queue_get(self, memory_id: str) -> dict | None:
@@ -227,7 +227,10 @@ class MarkdownStore(Store):
         path = self.queue_dir / f"{memory_id}.json"
         if not path.exists():
             return None
-        return json.loads(path.read_text(encoding="utf-8"))
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            raise StoreFormatError(f"{path} is malformed: {e}") from e
 
     def resolve_queue(self, memory_id: str) -> None:
         with store_lock(self.root):

@@ -28,6 +28,24 @@ def test_missing_registry_still_returns_empty(tmp_path):
     assert MarkdownStore(tmp_path).list() == []
 
 
+def test_queue_list_raises_on_corrupt_file(tmp_path):
+    store = MarkdownStore(tmp_path)
+    mem = store.add(Memory(fact="x", kind=Kind.tooling))
+    store.enqueue(mem, dest="memory.md")
+    (store.queue_dir / f"{mem.id}.json").write_text("{ broken json", encoding="utf-8")
+    with pytest.raises(StoreFormatError):
+        store.queue_list()
+
+
+def test_queue_get_raises_on_corrupt_file(tmp_path):
+    store = MarkdownStore(tmp_path)
+    mem = store.add(Memory(fact="x", kind=Kind.tooling))
+    store.enqueue(mem, dest="memory.md")
+    (store.queue_dir / f"{mem.id}.json").write_text("{ broken json", encoding="utf-8")
+    with pytest.raises(StoreFormatError):
+        store.queue_get(mem.id)
+
+
 def test_queue_get_rejects_traversal_id(tmp_path):
     store = MarkdownStore(tmp_path)
     mem = store.add(Memory(fact="x", kind=Kind.tooling))
