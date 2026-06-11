@@ -1,3 +1,4 @@
+import datetime as dt
 import os
 import stat
 import subprocess
@@ -165,6 +166,79 @@ def test_no_auto_refresh_when_disabled(tmp_path, monkeypatch):
 
     runner.invoke(app, ["forget", mem.id])
     assert target.read_text(encoding="utf-8") == original
+
+
+def test_gc_dry_run_reports_without_mutating(tmp_path, monkeypatch):
+    store_dir = tmp_path / "store"
+    monkeypatch.setenv("ENGRAM_STORE", str(store_dir))
+    store = MarkdownStore(store_dir)
+    store.add(Memory(fact="a rejected fact here", status=Status.rejected))
+
+    result = runner.invoke(app, ["gc", "--rejected"])
+    assert result.exit_code == 0
+    assert "dry-run" in result.stdout and "rejected" in result.stdout
+    # Nothing moved on a dry run.
+    assert any(m.status == Status.rejected for m in MarkdownStore(store_dir).list())
+    assert not (store_dir / "archive.md").exists()
+
+
+def test_gc_apply_archives_rejected(tmp_path, monkeypatch):
+    store_dir = tmp_path / "store"
+    monkeypatch.setenv("ENGRAM_STORE", str(store_dir))
+    store = MarkdownStore(store_dir)
+    drop = store.add(Memory(fact="a rejected fact here", status=Status.rejected))
+
+    result = runner.invoke(app, ["gc", "--apply", "--rejected"])
+    assert result.exit_code == 0
+    reloaded = MarkdownStore(store_dir)
+    assert drop.id not in [m.id for m in reloaded.list()]
+    assert drop.id in [m.id for m in reloaded.list_archived()]
+
+
+def test_gc_apply_migrate_backfills(tmp_path, monkeypatch):
+    store_dir = tmp_path / "store"
+    monkeypatch.setenv("ENGRAM_STORE", str(store_dir))
+    store = MarkdownStore(store_dir)
+    mem = store.add(
+        Memory(fact="uses uv here", source="harness:claude-code:-Users-bob-app")
+    )
+
+    result = runner.invoke(app, ["gc", "--apply", "--migrate"])
+    assert result.exit_code == 0
+    assert MarkdownStore(store_dir).get(mem.id).project == "-Users-bob-app"
+
+
+def test_doctor_fix_archives_long_dead_stale(tmp_path, monkeypatch):
+    store_dir = tmp_path / "store"
+    monkeypatch.setenv("ENGRAM_STORE", str(store_dir))
+    monkeypatch.setenv("ENGRAM_GC_STALE_GRACE_DAYS", "30")
+    store = MarkdownStore(store_dir)
+    dead = store.add(
+        Memory(
+            fact="long dead stale fact here",
+            status=Status.promoted,
+            decay="30d",
+            learned_at=dt.date(2020, 1, 1),
+        )
+    )
+
+    result = runner.invoke(app, ["doctor", "--fix"])
+    assert result.exit_code == 0
+    assert "fixed:" in result.stdout
+    assert dead.id in [m.id for m in MarkdownStore(store_dir).list_archived()]
+
+
+def test_stats_reports_shape(tmp_path, monkeypatch):
+    store_dir = tmp_path / "store"
+    monkeypatch.setenv("ENGRAM_STORE", str(store_dir))
+    store = MarkdownStore(store_dir)
+    store.add(Memory(fact="prefers pnpm", kind=Kind.tooling, status=Status.promoted))
+
+    result = runner.invoke(app, ["stats"])
+    assert result.exit_code == 0
+    assert "total: 1" in result.stdout
+    assert "by_status:" in result.stdout
+    assert "store_bytes:" in result.stdout
 
 
 def test_forget_reports_truthful_wording(tmp_path, monkeypatch):

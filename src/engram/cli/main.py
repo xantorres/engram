@@ -322,15 +322,67 @@ def forget(memory_id: str) -> None:
 
 
 @app.command()
-def doctor() -> None:
-    """Report stale, low-confidence, unverified, and conflicting memories."""
+def doctor(fix: bool = typer.Option(False, "--fix")) -> None:
+    """Report stale, low-confidence, unverified, and conflicting memories.
+
+    With --fix, transition past-decay facts to stale and archive the long-dead;
+    low-confidence, unverified, and conflicting facts are listed for your review.
+    """
     from engram.health import doctor as run_doctor
 
-    report = run_doctor(_store().list())
+    config = load_config()
+    store = _store_for(config)
+    report = run_doctor(store.list())
     for bucket, items in report.items():
         typer.echo(f"{bucket}: {len(items)}")
         for entry in items:
             typer.echo(f"  {entry}")
+    if fix:
+        result = store.mark_and_archive_stale(grace_days=config.gc.stale_grace_days)
+        typer.echo(
+            f"fixed: marked_stale={len(result['marked_stale'])} "
+            f"archived={len(result['archived'])}"
+        )
+        _auto_refresh(config, store)
+
+
+@app.command()
+def gc(
+    do_apply: bool = typer.Option(False, "--apply"),
+    bak: bool = typer.Option(False, "--bak"),
+    audit: bool = typer.Option(False, "--audit"),
+    rejected: bool = typer.Option(False, "--rejected"),
+    stale: bool = typer.Option(False, "--stale"),
+    dedup: bool = typer.Option(False, "--dedup"),
+    queue: bool = typer.Option(False, "--queue"),
+    migrate: bool = typer.Option(False, "--migrate"),
+) -> None:
+    """Run store hygiene (dry-run unless --apply). No step flags means a full sweep."""
+    from engram.core.gc import GarbageCollector, GcOptions
+
+    config = load_config()
+    store = _store_for(config)
+    options = GcOptions(
+        bak=bak, audit=audit, rejected=rejected, stale=stale, dedup=dedup, queue=queue,
+        migrate=migrate,
+    ).resolved()
+    report = GarbageCollector(store, config.gc).run(options, apply=do_apply)
+    mode = "applied" if do_apply else "dry-run"
+    typer.echo(f"[{mode}] gc")
+    for step, result in report.items():
+        typer.echo(f"  {step}: {result}")
+    if do_apply:
+        _auto_refresh(config, store)
+
+
+@app.command()
+def stats() -> None:
+    """Show store health: counts by status/kind/project, sizes, and fact age range."""
+    from engram.core.gc import collect_stats
+
+    snapshot = collect_stats(_store())
+    for key, value in snapshot.items():
+        typer.echo(f"{key}: {value}")
 
 
 @app.command(name="migrate-projects")
