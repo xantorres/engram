@@ -1,3 +1,4 @@
+import datetime as dt
 import os
 import stat
 
@@ -139,3 +140,85 @@ def test_append_log_is_newest_first(tmp_path):
     store.append_log(second)
     text = (tmp_path / "memory-log.md").read_text()
     assert text.index("second fact") < text.index("first fact")
+
+
+# --- E2 compaction -------------------------------------------------------------
+
+
+def test_archive_rejected_moves_out_of_registry(tmp_path):
+    store = MarkdownStore(tmp_path)
+    keep = store.add(Memory(fact="kept promoted fact", status=Status.promoted))
+    drop = store.add(Memory(fact="some rejected fact", status=Status.rejected))
+
+    report = store.archive_rejected()
+
+    assert report["count"] == 1 and drop.id in report["archived"]
+    ids = [m.id for m in store.list()]
+    assert keep.id in ids and drop.id not in ids
+    archived = store.list_archived()
+    assert [m.id for m in archived] == [drop.id]
+    assert archived[0].fact == "some rejected fact"
+
+
+def test_archive_rejected_dry_run_changes_nothing(tmp_path):
+    store = MarkdownStore(tmp_path)
+    drop = store.add(Memory(fact="some rejected fact", status=Status.rejected))
+    report = store.archive_rejected(dry_run=True)
+    assert report["count"] == 1
+    assert drop.id in [m.id for m in store.list()]
+    assert not (tmp_path / "archive.md").exists()
+
+
+def _aged(fact, *, days, decay="180d"):
+    learned = dt.date.today() - dt.timedelta(days=days)
+    return Memory(fact=fact, status=Status.promoted, decay=decay, learned_at=learned)
+
+
+def test_mark_and_archive_stale(tmp_path):
+    store = MarkdownStore(tmp_path)
+    fresh = store.add(_aged("fresh promoted fact here", days=10))
+    recently_stale = store.add(_aged("recently stale fact here", days=200))
+    long_stale = store.add(_aged("long dead stale fact here", days=400))
+    today = dt.date.today()
+
+    report = store.mark_and_archive_stale(today=today, grace_days=30)
+
+    assert long_stale.id in report["archived"]
+    assert recently_stale.id not in report["archived"]
+    assert {recently_stale.id, long_stale.id} <= set(report["marked_stale"])
+
+    remaining = {m.id: m for m in store.list()}
+    assert remaining[fresh.id].status == Status.promoted
+    assert remaining[recently_stale.id].status == Status.stale
+    assert long_stale.id not in remaining
+    assert store.list_archived()[0].id == long_stale.id
+
+
+def test_purge_queue_done_respects_window(tmp_path):
+    store = MarkdownStore(tmp_path)
+    mem = store.add(Memory(fact="x", kind=Kind.tooling))
+    store.enqueue(mem, dest="memory.md")
+    store.resolve_queue(mem.id)
+    done = store.queue_dir / "_done"
+    old = done / f"{mem.id}.json"
+    long_ago = dt.datetime.now(dt.UTC).timestamp() - 60 * 86400
+    os.utime(old, (long_ago, long_ago))
+    fresh = done / "mem-9999.json"
+    fresh.write_text("{}", encoding="utf-8")
+
+    report = store.purge_queue_done(30)
+
+    assert report["count"] == 1
+    assert not old.exists()
+    assert fresh.exists()
+
+
+def test_compaction_aborts_on_malformed_registry(tmp_path):
+    registry = tmp_path / "memory.md"
+    original = "not a valid store file"
+    registry.write_text(original, encoding="utf-8")
+    store = MarkdownStore(tmp_path)
+    with pytest.raises(StoreFormatError):
+        store.archive_rejected()
+    assert registry.read_text(encoding="utf-8") == original
+    assert not (tmp_path / "archive.md").exists()

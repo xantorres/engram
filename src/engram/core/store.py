@@ -22,6 +22,7 @@ import yaml
 from pydantic import ValidationError
 
 from engram.core import atomic
+from engram.core.freshness import is_stale, parse_decay
 from engram.core.locking import store_lock
 from engram.core.schema import SCHEMA_VERSION, Memory, Status
 from engram.core.text import render_safe
@@ -82,6 +83,7 @@ class MarkdownStore(Store):
         self.root = Path(root)
         atomic.secure_dir(self.root)
         self.registry = self.root / "memory.md"
+        self.archive = self.root / "archive.md"
         self.log = self.root / "memory-log.md"
         self.queue_dir = self.root / "queue"
         self._retention = atomic.RetentionPolicy(
@@ -103,21 +105,23 @@ class MarkdownStore(Store):
                 except OSError:
                     pass
 
-    def _load(self) -> list[Memory]:
-        if not self.registry.exists():
+    def _load_registry(self, path: Path) -> list[Memory]:
+        if not path.exists():
             return []
-        match = _FRONTMATTER.match(self.registry.read_text(encoding="utf-8"))
+        match = _FRONTMATTER.match(path.read_text(encoding="utf-8"))
         if not match:
-            raise StoreFormatError(f"{self.registry} is missing YAML frontmatter")
+            raise StoreFormatError(f"{path} is missing YAML frontmatter")
         try:
             data = yaml.safe_load(match.group(1)) or {}
             if not isinstance(data, dict):
-                raise StoreFormatError(f"{self.registry} frontmatter is not a mapping")
+                raise StoreFormatError(f"{path} frontmatter is not a mapping")
             return [Memory.from_item(item) for item in (data.get("items") or [])]
         except (yaml.YAMLError, ValidationError) as e:
-            raise StoreFormatError(f"{self.registry} is malformed: {e}") from e
+            raise StoreFormatError(f"{path} is malformed: {e}") from e
 
-    def _save(self, memories: list[Memory]) -> dict:
+    def _save_registry(
+        self, path: Path, memories: list[Memory], *, endpoint: str, body: str
+    ) -> dict:
         front = {
             "schema": SCHEMA_VERSION,
             "generated": dt.date.today().isoformat(),
@@ -127,15 +131,22 @@ class MarkdownStore(Store):
             "---\n"
             + yaml.safe_dump(front, sort_keys=False, allow_unicode=True)
             + "---\n\n"
-            + _render_body(memories)
+            + body
         )
         return atomic.atomic_write(
-            self.registry,
-            content,
-            root=self.root,
-            endpoint="store/save",
-            retention=self._retention,
+            path, content, root=self.root, endpoint=endpoint, retention=self._retention
         )
+
+    def _load(self) -> list[Memory]:
+        return self._load_registry(self.registry)
+
+    def _save(self, memories: list[Memory]) -> dict:
+        return self._save_registry(
+            self.registry, memories, endpoint="store/save", body=_render_body(memories)
+        )
+
+    def list_archived(self) -> list[Memory]:
+        return self._load_registry(self.archive)
 
     @staticmethod
     def _next_id(memories: list[Memory]) -> str:
@@ -260,6 +271,101 @@ class MarkdownStore(Store):
                 return
             done = atomic.secure_dir(self.queue_dir / "_done")
             src.rename(done / src.name)
+
+    def _move_to_archive(self, keep: list[Memory], move: list[Memory]) -> None:
+        """Append ``move`` to archive.md, then rewrite the registry as ``keep``.
+
+        Archive first so the facts always survive; if the registry rewrite fails,
+        roll the archive append back so a fact can't end up in both files.
+        """
+        archived = self._load_registry(self.archive)
+        arch_result = self._save_registry(
+            self.archive,
+            archived + move,
+            endpoint="store/archive",
+            body=_render_archive_body(archived + move),
+        )
+        try:
+            self._save(keep)
+        except Exception:
+            atomic.restore_from_bak(arch_result["undo_token"], root=self.root)
+            raise
+
+    def archive_rejected(self, *, dry_run: bool = False) -> dict:
+        """Move ``rejected`` facts out of the live registry into archive.md."""
+        with store_lock(self.root):
+            memories = self._load()
+            rejected = [m for m in memories if m.status == Status.rejected]
+            if rejected and not dry_run:
+                kept = [m for m in memories if m.status != Status.rejected]
+                self._move_to_archive(kept, rejected)
+            return {"archived": [m.id for m in rejected], "count": len(rejected)}
+
+    def mark_and_archive_stale(
+        self, *, today: dt.date | None = None, grace_days: int, dry_run: bool = False
+    ) -> dict:
+        """Write ``stale`` status to promoted facts past decay, then archive the long-dead.
+
+        A fact stale beyond its decay horizon plus ``grace_days`` is moved to the
+        archive; one that just turned stale only gets its status written so it
+        drops out of recall but stays recoverable in the live registry.
+        """
+        today = today or dt.date.today()
+        with store_lock(self.root):
+            memories = self._load()
+            marked_stale: list[str] = []
+            keep: list[Memory] = []
+            move: list[Memory] = []
+            for memory in memories:
+                fresh_stale = memory.status == Status.promoted and is_stale(memory, today=today)
+                if fresh_stale:
+                    memory = memory.model_copy(update={"status": Status.stale})
+                    marked_stale.append(memory.id)
+                if memory.status != Status.stale:
+                    keep.append(memory)
+                    continue
+                base = memory.last_verified or memory.learned_at
+                horizon = parse_decay(memory.decay) + dt.timedelta(days=grace_days)
+                if (today - base) > horizon:
+                    move.append(memory)
+                else:
+                    keep.append(memory)
+            archived = [m.id for m in move]
+            if (marked_stale or move) and not dry_run:
+                self._move_to_archive(keep, move)
+            return {"marked_stale": marked_stale, "archived": archived, "count": len(archived)}
+
+    def purge_queue_done(self, keep_days: int, *, dry_run: bool = False) -> dict:
+        """Hard-delete resolved queue envelopes older than ``keep_days`` (pure cruft)."""
+        with store_lock(self.root):
+            done = self.queue_dir / "_done"
+            if not done.exists():
+                return {"purged": [], "count": 0}
+            cutoff = dt.datetime.now(dt.UTC).timestamp() - keep_days * 86400
+            purged: list[str] = []
+            for path in sorted(done.glob("*.json")):
+                try:
+                    if path.stat().st_mtime < cutoff:
+                        if not dry_run:
+                            path.unlink()
+                        purged.append(path.name)
+                except OSError:
+                    pass
+            return {"purged": purged, "count": len(purged)}
+
+
+def _render_archive_body(memories: list[Memory]) -> str:
+    """Human-readable listing of archived facts; the recoverable data is the frontmatter."""
+    if not memories:
+        return "# Archive\n\n_Empty._\n"
+    by_status: dict[str, list[Memory]] = {}
+    for m in memories:
+        by_status.setdefault(m.status.value, []).append(m)
+    lines = ["# Archive", "", "Compacted out of the live registry. Recoverable from frontmatter."]
+    for status in sorted(by_status):
+        lines.append(f"\n## {status}\n")
+        lines.extend(f"- {render_safe(m.fact)} ({m.id})" for m in by_status[status])
+    return "\n".join(lines) + "\n"
 
 
 def _render_body(memories: list[Memory]) -> str:
