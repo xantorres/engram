@@ -30,11 +30,23 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _env_list(name: str, default: list[str] | None) -> list[str] | None:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    items = [item.strip() for item in stripped.split(",") if item.strip()]
+    return items or None
+
+
 @dataclass
 class Config:
     store_dir: Path
     extractor: ExtractorConfig
     autopromote: bool = False
+    kind_allowlist: list[str] | None = None
 
 
 def load(path: str | Path | None = None) -> Config:
@@ -51,6 +63,9 @@ def load(path: str | Path | None = None) -> Config:
         os.environ.get("ENGRAM_STORE", store.get("dir") or default_store_dir())
     ).expanduser()
 
+    toml_allowlist = bridge.get("kind_allowlist") or None
+    kind_allowlist = _env_list("ENGRAM_BRIDGE_KIND_ALLOWLIST", toml_allowlist)
+
     return Config(
         store_dir=store_dir,
         extractor=ExtractorConfig(
@@ -61,4 +76,5 @@ def load(path: str | Path | None = None) -> Config:
             api_key=os.environ.get("ENGRAM_EXTRACTOR_KEY", extractor.get("api_key")),
         ),
         autopromote=_env_bool("ENGRAM_AUTOPROMOTE", bool(bridge.get("autopromote", False))),
+        kind_allowlist=kind_allowlist,
     )

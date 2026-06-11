@@ -70,14 +70,17 @@ def harvest(
     from engram.extract.client import Extractor
 
     config = load_config()
-    staged = harvest_session(
+    result = harvest_session(
         MarkdownStore(config.store_dir),
         path,
         harness=harness,
         extractor=Extractor(config.extractor),
         min_confidence=min_confidence,
     )
-    typer.echo(f"staged {len(staged)} candidate(s) from {path}")
+    typer.echo(
+        f"staged {result['staged']} candidate(s) from {path} "
+        f"(skipped dupe={result['skipped_dupe']} trivial={result['skipped_trivial']})"
+    )
 
 
 @app.command()
@@ -132,7 +135,7 @@ def sync(do_apply: bool = typer.Option(False, "--apply")) -> None:
 
     config = load_config()
     store = MarkdownStore(config.store_dir)
-    result = bridge.plan(store)
+    result = bridge.plan(store, kind_allowlist=config.kind_allowlist)
     if do_apply and config.autopromote:
         bridge.apply(store, result, autopromote=True)
         mode = "applied"
@@ -193,6 +196,18 @@ def reject(memory_id: str, reason: str = typer.Option("", "--reason")) -> None:
 
     result = review.reject(_store(), memory_id, reason=reason)
     typer.echo(f"rejected {memory_id}" if result["ok"] else result["error"])
+
+
+@app.command()
+def forget(memory_id: str) -> None:
+    """Retract a promoted memory (marks it rejected, emits undo token)."""
+    from engram.bridge import review
+
+    result = review.forget(_store(), memory_id)
+    if not result["ok"]:
+        typer.echo(result["error"])
+        raise typer.Exit(1)
+    typer.echo(f"forgotten {result['id']}  undo_token={result['undo_token']}")
 
 
 @app.command()

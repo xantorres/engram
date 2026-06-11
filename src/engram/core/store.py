@@ -123,6 +123,21 @@ class MarkdownStore(Store):
                 return memory
         raise KeyError(f"unknown memory id: {memory.id}")
 
+    def update_with_token(self, memory: Memory) -> tuple[Memory, dict]:
+        """Update a memory and return (memory, atomic_write_result).
+
+        The atomic_write_result dict contains the undo_token for the memory.md
+        write — callers that need to surface undo capability use this instead of
+        update() so they receive the token from the actual file mutation.
+        """
+        memories = self._load()
+        for i, existing in enumerate(memories):
+            if existing.id == memory.id:
+                memories[i] = memory
+                write_result = self._save(memories)
+                return memory, write_result
+        raise KeyError(f"unknown memory id: {memory.id}")
+
     def append_log(self, memory: Memory) -> dict:
         stamp = f"{dt.datetime.now(dt.UTC):%Y-%m-%dT%H:%M:%SZ}"
         line = (
