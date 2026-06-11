@@ -28,6 +28,23 @@ def test_missing_registry_still_returns_empty(tmp_path):
     assert MarkdownStore(tmp_path).list() == []
 
 
+def test_queue_get_rejects_traversal_id(tmp_path):
+    store = MarkdownStore(tmp_path)
+    mem = store.add(Memory(fact="x", kind=Kind.tooling))
+    store.enqueue(mem, dest="memory.md")
+    (tmp_path / "secret.json").write_text('{"leaked": true}', encoding="utf-8")
+    assert store.queue_get("../secret") is None
+
+
+def test_resolve_queue_ignores_traversal_id(tmp_path):
+    store = MarkdownStore(tmp_path)
+    mem = store.add(Memory(fact="x", kind=Kind.tooling))
+    store.enqueue(mem, dest="memory.md")
+    (tmp_path / "outside.json").write_text("{}", encoding="utf-8")
+    store.resolve_queue("../outside")
+    assert (tmp_path / "outside.json").exists()
+
+
 def test_store_init_tightens_existing_modes(tmp_path):
     root = tmp_path / "store"
     root.mkdir()

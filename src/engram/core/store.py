@@ -28,6 +28,12 @@ from engram.core.text import render_safe
 
 _FRONTMATTER = re.compile(r"^---\n(.*?)\n---\n?(.*)$", re.DOTALL)
 _LOG_HEADER = "# Memory log\n\nNewest first. Auto-captured, low-risk facts.\n\n"
+_MEM_ID_RE = re.compile(r"^mem-\d+$")
+
+
+def _valid_id(memory_id: str) -> bool:
+    """Only generated ``mem-<digits>`` ids may build a queue path - no traversal."""
+    return bool(_MEM_ID_RE.match(memory_id))
 
 
 class StoreFormatError(RuntimeError):
@@ -192,6 +198,8 @@ class MarkdownStore(Store):
         self, memory: Memory, *, dest: str | None = None, diff: str = "", reason: str = ""
     ) -> dict:
         with store_lock(self.root):
+            if not _valid_id(memory.id):
+                raise ValueError(f"refusing to enqueue invalid memory id: {memory.id!r}")
             atomic.secure_dir(self.queue_dir)
             payload = {"memory": memory.as_item(), "dest": dest, "diff": diff, "reason": reason}
             return atomic.atomic_write(
@@ -214,6 +222,8 @@ class MarkdownStore(Store):
         return items
 
     def queue_get(self, memory_id: str) -> dict | None:
+        if not _valid_id(memory_id):
+            return None
         path = self.queue_dir / f"{memory_id}.json"
         if not path.exists():
             return None
@@ -221,6 +231,8 @@ class MarkdownStore(Store):
 
     def resolve_queue(self, memory_id: str) -> None:
         with store_lock(self.root):
+            if not _valid_id(memory_id):
+                return
             src = self.queue_dir / f"{memory_id}.json"
             if not src.exists():
                 return
