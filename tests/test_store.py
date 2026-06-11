@@ -213,6 +213,32 @@ def test_purge_queue_done_respects_window(tmp_path):
     assert fresh.exists()
 
 
+def test_dedup_promoted_archives_lower_confidence(tmp_path):
+    store = MarkdownStore(tmp_path)
+    fact = "prefers pnpm over npm for node projects"
+    high = store.add(Memory(fact=fact, status=Status.promoted, confidence=0.9))
+    low = store.add(Memory(fact=fact, status=Status.promoted, confidence=0.6))
+
+    report = store.dedup_promoted()
+
+    assert report["count"] == 1 and low.id in report["archived"]
+    ids = [m.id for m in store.list()]
+    assert high.id in ids and low.id not in ids
+    assert store.list_archived()[0].id == low.id
+
+
+def test_dedup_promoted_respects_project(tmp_path):
+    store = MarkdownStore(tmp_path)
+    fact = "prefers pnpm over npm for node projects"
+    a = store.add(Memory(fact=fact, status=Status.promoted, confidence=0.9, project="proj-a"))
+    b = store.add(Memory(fact=fact, status=Status.promoted, confidence=0.6, project="proj-b"))
+
+    report = store.dedup_promoted()
+
+    assert report["count"] == 0
+    assert {m.id for m in store.list()} == {a.id, b.id}
+
+
 def test_compaction_aborts_on_malformed_registry(tmp_path):
     registry = tmp_path / "memory.md"
     original = "not a valid store file"

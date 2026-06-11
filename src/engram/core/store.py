@@ -21,7 +21,7 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from engram.core import atomic
+from engram.core import atomic, dedup
 from engram.core.freshness import is_stale, parse_decay
 from engram.core.locking import store_lock
 from engram.core.schema import SCHEMA_VERSION, Memory, Status
@@ -335,6 +335,36 @@ class MarkdownStore(Store):
                 self._move_to_archive(keep, move)
             return {"marked_stale": marked_stale, "archived": archived, "count": len(archived)}
 
+    def dedup_promoted(self, *, dry_run: bool = False) -> dict:
+        """Archive near-duplicate promoted facts, keeping the strongest of each pair.
+
+        Compares only within the same project (cross-project lexical matches are not
+        real duplicates) and keeps the higher-confidence — then more-recently-verified
+        — fact, moving the other to the archive via the same recoverable path.
+        """
+        with store_lock(self.root):
+            memories = self._load()
+            promoted = [m for m in memories if m.status == Status.promoted]
+            archived_ids: set[str] = set()
+            for i, first in enumerate(promoted):
+                if first.id in archived_ids:
+                    continue
+                for second in promoted[i + 1 :]:
+                    if second.id in archived_ids or first.project != second.project:
+                        continue
+                    if dedup.compare(first.fact, second.fact) != "duplicate":
+                        continue
+                    if _outranks(first, second):
+                        archived_ids.add(second.id)
+                    else:
+                        archived_ids.add(first.id)
+                        break
+            if archived_ids and not dry_run:
+                keep = [m for m in memories if m.id not in archived_ids]
+                move = [m for m in memories if m.id in archived_ids]
+                self._move_to_archive(keep, move)
+            return {"archived": sorted(archived_ids), "count": len(archived_ids)}
+
     def backfill_projects(self, *, dry_run: bool = False) -> dict:
         """Populate the ``project`` field from the ``source`` string where empty.
 
@@ -373,6 +403,13 @@ class MarkdownStore(Store):
                 except OSError:
                     pass
             return {"purged": purged, "count": len(purged)}
+
+
+def _outranks(a: Memory, b: Memory) -> bool:
+    """True when ``a`` should be kept over duplicate ``b``: higher confidence, then
+    more recently verified (an unverified fact sorts oldest)."""
+    floor = dt.date.min
+    return (a.confidence, a.last_verified or floor) >= (b.confidence, b.last_verified or floor)
 
 
 def _project_from_source(source: str) -> str | None:
