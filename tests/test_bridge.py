@@ -126,6 +126,18 @@ def test_approve_does_not_append_to_log(tmp_path):
     assert "review/approve" in endpoints
 
 
+def test_approve_rolls_back_registry_when_resolve_fails(tmp_path):
+    store = _store_with(tmp_path, Memory(fact="VAT is 12345678X", kind=Kind.fiscal))
+    bridge.apply(store, bridge.plan(store), autopromote=True)
+    mid = store.list(status=Status.pending)[0].id
+    with patch.object(store, "resolve_queue", side_effect=RuntimeError("resolve boom")):
+        with pytest.raises(RuntimeError):
+            review.approve(store, mid, confirm=True, today=dt.date(2026, 6, 9))
+    # Registry reverted, queue item still active — no promoted-yet-still-queued split.
+    assert store.get(mid).status == Status.pending
+    assert store.queue_get(mid) is not None
+
+
 def test_review_reject(tmp_path):
     store = _store_with(tmp_path, Memory(fact="VAT is 12345678X", kind=Kind.fiscal))
     bridge.apply(store, bridge.plan(store), autopromote=True)
