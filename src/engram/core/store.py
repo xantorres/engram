@@ -14,6 +14,7 @@ from __future__ import annotations
 import abc
 import datetime as dt
 import json
+import os
 import re
 from pathlib import Path
 
@@ -61,10 +62,25 @@ class Store(abc.ABC):
 class MarkdownStore(Store):
     def __init__(self, root: str | Path):
         self.root = Path(root)
-        self.root.mkdir(parents=True, exist_ok=True)
+        atomic.secure_dir(self.root)
         self.registry = self.root / "memory.md"
         self.log = self.root / "memory-log.md"
         self.queue_dir = self.root / "queue"
+        self._chmod_existing()
+
+    def _chmod_existing(self) -> None:
+        """Tighten any pre-existing store artifacts to 0700 dirs / 0600 files.
+
+        Idempotent and cheap; runs on every init so a store created before this
+        hardening (or touched by another tool) is migrated in place.
+        """
+        for dirpath, _dirs, filenames in os.walk(self.root):
+            os.chmod(dirpath, atomic.DIR_MODE)
+            for name in filenames:
+                try:
+                    os.chmod(Path(dirpath) / name, atomic.FILE_MODE)
+                except OSError:
+                    pass
 
     def _load(self) -> list[Memory]:
         if not self.registry.exists():
@@ -160,7 +176,7 @@ class MarkdownStore(Store):
     def enqueue(
         self, memory: Memory, *, dest: str | None = None, diff: str = "", reason: str = ""
     ) -> dict:
-        self.queue_dir.mkdir(parents=True, exist_ok=True)
+        atomic.secure_dir(self.queue_dir)
         payload = {"memory": memory.as_item(), "dest": dest, "diff": diff, "reason": reason}
         return atomic.atomic_write(
             self.queue_dir / f"{memory.id}.json",
@@ -191,8 +207,7 @@ class MarkdownStore(Store):
         src = self.queue_dir / f"{memory_id}.json"
         if not src.exists():
             return
-        done = self.queue_dir / "_done"
-        done.mkdir(parents=True, exist_ok=True)
+        done = atomic.secure_dir(self.queue_dir / "_done")
         src.rename(done / src.name)
 
 
