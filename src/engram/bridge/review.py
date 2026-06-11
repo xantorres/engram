@@ -45,7 +45,15 @@ def approve(store: Store, memory_id: str, *, confirm: bool, today: dt.date | Non
                 undo_token = ""
         except KeyError:
             return {"ok": False, "error": f"unknown memory {memory_id}"}
-        store.resolve_queue(memory_id)
+        try:
+            store.resolve_queue(memory_id)
+        except Exception:
+            # Promotion and queue resolution must land together. If resolving the
+            # queue item fails, undo the registry promotion so the fact stays
+            # pending in the queue rather than promoted-yet-still-queued.
+            if undo_token and root is not None:
+                atomic.restore_from_bak(undo_token, root=root)
+            raise
 
         # A curated approval writes only the registry; appending to the low-risk
         # log would duplicate the sensitive fact into an auto-captured surface it
