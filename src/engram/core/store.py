@@ -335,6 +335,27 @@ class MarkdownStore(Store):
                 self._move_to_archive(keep, move)
             return {"marked_stale": marked_stale, "archived": archived, "count": len(archived)}
 
+    def backfill_projects(self, *, dry_run: bool = False) -> dict:
+        """Populate the ``project`` field from the ``source`` string where empty.
+
+        Idempotent: only facts with no project and a parseable ``harness:tool:project``
+        source are touched, so repeated runs converge. Archives nothing.
+        """
+        with store_lock(self.root):
+            memories = self._load()
+            updated: list[str] = []
+            new: list[Memory] = []
+            for memory in memories:
+                if not memory.project:
+                    project = _project_from_source(memory.source)
+                    if project:
+                        memory = memory.model_copy(update={"project": project})
+                        updated.append(memory.id)
+                new.append(memory)
+            if updated and not dry_run:
+                self._save(new)
+            return {"updated": updated, "count": len(updated)}
+
     def purge_queue_done(self, keep_days: int, *, dry_run: bool = False) -> dict:
         """Hard-delete resolved queue envelopes older than ``keep_days`` (pure cruft)."""
         with store_lock(self.root):
@@ -352,6 +373,14 @@ class MarkdownStore(Store):
                 except OSError:
                     pass
             return {"purged": purged, "count": len(purged)}
+
+
+def _project_from_source(source: str) -> str | None:
+    """Recover the project slug from a ``harness:<tool>:<project>`` capture source."""
+    parts = source.split(":")
+    if len(parts) >= 3 and parts[0] == "harness":
+        return ":".join(parts[2:]) or None
+    return None
 
 
 def _render_archive_body(memories: list[Memory]) -> str:

@@ -73,6 +73,30 @@ def test_cli_reports_store_format_error_cleanly(tmp_path):
     assert "frontmatter" in proc.stderr.lower()
 
 
+def test_migrate_projects_backfills_from_source(tmp_path, monkeypatch):
+    store_dir = tmp_path / "store"
+    monkeypatch.setenv("ENGRAM_STORE", str(store_dir))
+    store = MarkdownStore(store_dir)
+    mem = store.add(
+        Memory(
+            fact="uses uv for dependency management",
+            kind=Kind.tooling,
+            source="harness:claude-code:-Users-alice-engram",
+        )
+    )
+
+    dry = runner.invoke(app, ["migrate-projects"])
+    assert dry.exit_code == 0
+    assert MarkdownStore(store_dir).get(mem.id).project is None
+
+    applied = runner.invoke(app, ["migrate-projects", "--apply"])
+    assert applied.exit_code == 0
+    assert MarkdownStore(store_dir).get(mem.id).project == "-Users-alice-engram"
+
+    again = runner.invoke(app, ["migrate-projects", "--apply"])
+    assert "0 fact" in again.stdout
+
+
 def test_forget_reports_truthful_wording(tmp_path, monkeypatch):
     store_dir = tmp_path / "store"
     monkeypatch.setenv("ENGRAM_STORE", str(store_dir))

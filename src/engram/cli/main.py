@@ -336,6 +336,14 @@ def doctor() -> None:
             typer.echo(f"  {entry}")
 
 
+@app.command(name="migrate-projects")
+def migrate_projects(do_apply: bool = typer.Option(False, "--apply")) -> None:
+    """Backfill the project field from each fact's source (dry-run unless --apply)."""
+    report = _store().backfill_projects(dry_run=not do_apply)
+    mode = "applied" if do_apply else "dry-run"
+    typer.echo(f"[{mode}] backfilled project on {report['count']} fact(s)")
+
+
 @app.command(name="import")
 def import_(directory: Path) -> None:
     """Import memories from a directory of frontmatter-markdown files."""
