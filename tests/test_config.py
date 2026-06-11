@@ -37,6 +37,19 @@ def test_extractor_base_url_non_string_raises(tmp_path, monkeypatch):
         load(path)
 
 
+def test_kind_allowlist_rejects_curated_kind(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENGRAM_BRIDGE_KIND_ALLOWLIST", "fiscal")
+    with pytest.raises(ConfigError):
+        load(tmp_path / "none.toml")
+
+
+def test_kind_allowlist_rejects_unknown_kind(tmp_path, monkeypatch):
+    monkeypatch.delenv("ENGRAM_BRIDGE_KIND_ALLOWLIST", raising=False)
+    path = _write(tmp_path, '[bridge]\nkind_allowlist = ["banana"]\n')
+    with pytest.raises(ConfigError):
+        load(path)
+
+
 def test_valid_config_loads(tmp_path, monkeypatch):
     for var in (
         "ENGRAM_AUTOPROMOTE",
