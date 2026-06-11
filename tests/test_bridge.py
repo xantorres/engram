@@ -74,6 +74,19 @@ def test_append_rolls_back_log_when_registry_update_fails(tmp_path):
     assert not (log.exists() and "prefers pnpm" in log.read_text())
 
 
+def test_queue_rolls_back_registry_when_enqueue_fails(tmp_path):
+    store = _store_with(tmp_path, Memory(fact="VAT is 12345678X", kind=Kind.fiscal))
+    result = bridge.plan(store)
+    with patch.object(store, "enqueue", side_effect=RuntimeError("queue boom")):
+        with pytest.raises(RuntimeError):
+            bridge.apply(store, result, autopromote=True, today=dt.date(2026, 6, 9))
+    # Registry reverted: not left escalated-but-unqueued (invisible to review).
+    mem = store.list()[0]
+    assert mem.status == Status.pending
+    assert mem.risk_tier == 1
+    assert store.queue_get(mem.id) is None
+
+
 def test_apply_queues_curated(tmp_path):
     store = _store_with(tmp_path, Memory(fact="VAT is 12345678X", kind=Kind.fiscal))
     bridge.apply(store, bridge.plan(store), autopromote=True)
