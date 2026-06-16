@@ -14,6 +14,7 @@ from pathlib import Path
 
 from engram.config import GcConfig
 from engram.core import atomic
+from engram.core.locking import store_lock
 from engram.core.store import MarkdownStore
 
 
@@ -47,28 +48,33 @@ class GarbageCollector:
         self.config = config
 
     def run(self, options: GcOptions, *, apply: bool) -> dict:
-        """Run the selected steps; ``apply=False`` reports counts without mutating."""
+        """Run the selected steps; ``apply=False`` reports counts without mutating.
+
+        The whole sweep runs under one ``store_lock`` so it is serialized against a
+        concurrent harvest; the reentrant lock lets the inner store methods re-enter.
+        """
         dry = not apply
         report: dict[str, dict] = {}
-        # Backfill first so project scoping informs dedup and conflict checks.
-        if options.migrate:
-            report["migrate"] = self.store.backfill_projects(dry_run=dry)
-        if options.rejected:
-            report["rejected"] = self.store.archive_rejected(dry_run=dry)
-        if options.stale:
-            report["stale"] = self.store.mark_and_archive_stale(
-                grace_days=self.config.stale_grace_days, dry_run=dry
-            )
-        if options.dedup:
-            report["dedup"] = self.store.dedup_promoted(dry_run=dry)
-        if options.queue:
-            report["queue"] = self.store.purge_queue_done(
-                self.config.queue_done_keep_days, dry_run=dry
-            )
-        if options.bak:
-            report["bak"] = self._bak(apply)
-        if options.audit:
-            report["audit"] = self._audit(apply)
+        with store_lock(self.store.root):
+            # Backfill first so project scoping informs dedup and conflict checks.
+            if options.migrate:
+                report["migrate"] = self.store.backfill_projects(dry_run=dry)
+            if options.rejected:
+                report["rejected"] = self.store.archive_rejected(dry_run=dry)
+            if options.stale:
+                report["stale"] = self.store.mark_and_archive_stale(
+                    grace_days=self.config.stale_grace_days, dry_run=dry
+                )
+            if options.dedup:
+                report["dedup"] = self.store.dedup_promoted(dry_run=dry)
+            if options.queue:
+                report["queue"] = self.store.purge_queue_done(
+                    self.config.queue_done_keep_days, dry_run=dry
+                )
+            if options.bak:
+                report["bak"] = self._bak(apply)
+            if options.audit:
+                report["audit"] = self._audit(apply)
         return report
 
     def _bak(self, apply: bool) -> dict:
