@@ -197,6 +197,102 @@ def test_a_second_sync_does_not_overwrite_the_escalation_reason(tmp_path):
     assert "conflict" in first_reason
 
 
+# ---------------------------------------------------------------------------
+# An agent must not be able to erase what a human approved
+# ---------------------------------------------------------------------------
+
+
+def test_an_agent_capture_flags_a_contradiction_without_retiring_it(tmp_path):
+    """Retiring is a write on reviewed knowledge; the MCP surface may not do it.
+
+    Otherwise `recall` plus one `remember("<noun> was removed")` is a zero-effort
+    erasure primitive for any agent that read a malicious instruction.
+    """
+    from engram.capture.active import stage
+
+    store = MarkdownStore(tmp_path)
+    old = store.add(
+        Memory(
+            fact="The user prefers TypeScript for all new backend services.",
+            status=Status.promoted,
+            last_verified=dt.date.today(),
+        )
+    )
+
+    result = stage(store, "TypeScript was uninstalled from the machine.", retire=False)
+
+    assert store.get(old.id).status == Status.promoted, "an agent retired a reviewed fact"
+    assert store.queue_get(old.id) is not None, "the dispute was not surfaced for review"
+    assert result.disputed == (old.id,)
+
+
+def test_a_human_capture_still_retires(tmp_path):
+    from engram.capture.active import stage
+
+    store = MarkdownStore(tmp_path)
+    old = store.add(
+        Memory(
+            fact="The user prefers TypeScript for all new backend services.",
+            status=Status.promoted,
+            last_verified=dt.date.today(),
+        )
+    )
+
+    result = stage(store, "TypeScript was uninstalled from the machine.", retire=True)
+
+    assert store.get(old.id).status == Status.superseded
+    assert result.superseded == (old.id,)
+
+
+def test_the_mcp_remember_tool_cannot_retire(tmp_path, monkeypatch):
+    import asyncio
+
+    from fastmcp import Client
+
+    monkeypatch.setenv("ENGRAM_STORE", str(tmp_path / "store"))
+    store = MarkdownStore(tmp_path / "store")
+    old = store.add(
+        Memory(
+            fact="The user prefers TypeScript for all new backend services.",
+            status=Status.promoted,
+            last_verified=dt.date.today(),
+        )
+    )
+    from engram.mcp.server import mcp
+
+    async def call():
+        async with Client(mcp) as client:
+            return (
+                await client.call_tool(
+                    "remember", {"fact": "TypeScript was uninstalled from the machine."}
+                )
+            ).data
+
+    asyncio.run(call())
+
+    assert store.get(old.id).status == Status.promoted
+
+
+# ---------------------------------------------------------------------------
+# Bounded input
+# ---------------------------------------------------------------------------
+
+
+def test_a_huge_fact_cannot_stall_capture(tmp_path):
+    """Dedup runs a backtracking regex per stored fact; unbounded input is a DoS."""
+    import time
+
+    from engram.capture.active import stage
+
+    store = MarkdownStore(tmp_path)
+    for n in range(30):
+        store.add(Memory(fact=f"The user uses tool number {n} for building things"))
+
+    started = time.perf_counter()
+    stage(store, "a-" * 60_000)
+    assert time.perf_counter() - started < 5.0
+
+
 def test_the_refusal_message_names_a_command_that_exists(tmp_path):
     store = MarkdownStore(tmp_path)
     mem = store.add(Memory(fact="prefers pnpm", status=Status.rejected))

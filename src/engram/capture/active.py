@@ -30,7 +30,10 @@ class CaptureResult:
     reason: str = ""
     category: str = ""
     duplicate_of: str | None = None
+    #: Facts this one retired outright - only ever set for a trusted capture.
     superseded: tuple[str, ...] = ()
+    #: Facts this one contradicts but was not allowed to retire; filed for review.
+    disputed: tuple[str, ...] = ()
 
 
 class CaptureRefused(RuntimeError):
@@ -49,13 +52,20 @@ def stage(
     confidence: float = 0.6,
     source: str = "tool:remember",
     force: bool = False,
+    retire: bool = True,
 ) -> CaptureResult:
-    """Screen, stage, and retire whatever the new fact contradicts.
+    """Screen, stage, and deal with whatever the new fact contradicts.
 
     ``force`` overrides the duplicate screen. It also overrides the credential
     screen, but such a fact is staged at tier 3 so it can never auto-promote:
     the user may decide engram is the right home for it, and still has to say so
     a second time at review.
+
+    ``retire`` says whether this caller is trusted to drop a contradicted fact
+    out of recall. Human-invoked capture is; the MCP tool an agent calls is not,
+    and files the contradiction for review instead. This is the same line the
+    rest of engram draws - a human approves writes to reviewed knowledge, an
+    agent proposes them.
 
     Screening, staging and retiring run under one lock. They are a single
     read-modify-write over the registry, and interleaving them with another
@@ -91,9 +101,13 @@ def stage(
         # Safe to reuse rather than re-parse: the lock is held, so nothing has
         # written since the snapshot was taken.
         promoted = [m for m in known if m.status == Status.promoted]
+        collided = supersede.flag_contradicted(
+            store, memory, promoted=promoted, retire=retire
+        )
         return CaptureResult(
             memory=memory,
-            superseded=supersede.flag_contradicted(store, memory, promoted=promoted),
+            superseded=collided if retire else (),
+            disputed=() if retire else collided,
         )
 
 

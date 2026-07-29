@@ -45,6 +45,10 @@ CREDENTIAL_LOOKALIKES = [
     "User collaborates with a stakeholder named Paul on design token alignment.",
     "The user uses the environment variable `MF_HOT_TYPES=1` to control type refreshing.",
     "User's Google OAuth client is in 'Testing' status, causing 7-day token expiration",
+    # Reporting a credential's *state* is not disclosing it.
+    "User's Gmail refresh token was expired/revoked (invalid_grant)",
+    "User's Google OAuth refresh token was revoked around mid-May 2026",
+    "The user's API key is missing from the deployment environment",
     "The user's UAT environment is currently deployed with broken URLs due to a `$web` "
     "path handling issue in the `.env` generation step.",
 ]
@@ -118,6 +122,30 @@ def test_credential_locations_are_sensitive(fact):
 @pytest.mark.parametrize("fact", KEEPERS)
 def test_ordinary_facts_are_not_sensitive(fact):
     assert screen.sensitivity(fact) is None
+
+
+# A transcript where the user pasted a credential is exactly what harvest reads.
+# A fact carrying the secret itself is worse than one naming where it lives, so
+# these must never depend on the fact also using a locator phrase.
+SECRET_VALUES = [
+    "The user's password is hunter2",
+    "The user's GitHub token is ghp_aBcD1234567890abcdefghijklmnop",
+    "The API key is sk-ant-api03-xyzabc123",
+    "The user's SSH passphrase: correcthorsebatterystaple",
+    "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    "The user's signing key is -----BEGIN OPENSSH PRIVATE KEY-----",
+    "Database credentials: host=prod user=admin",
+]
+
+
+@pytest.mark.parametrize("fact", SECRET_VALUES)
+def test_a_fact_carrying_the_secret_itself_is_sensitive(fact):
+    assert screen.sensitivity(fact) is not None
+
+
+def test_a_recognisable_secret_is_caught_with_no_credential_word_at_all():
+    """A bare token pasted into a transcript still must not be stored."""
+    assert screen.sensitivity("Use ghp_aBcD1234567890abcdefghijklmnop when pushing") is not None
 
 
 @pytest.mark.parametrize("fact", CREDENTIAL_LOOKALIKES)

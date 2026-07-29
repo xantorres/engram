@@ -17,7 +17,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 
-from engram.core import atomic
+from engram.core import atomic, screen
 from engram.core.locking import store_lock
 from engram.core.schema import Memory, Status
 from engram.core.store import MarkdownStore, Store
@@ -105,7 +105,15 @@ def approve(store: Store, memory_id: str, *, confirm: bool, today: dt.date | Non
                     "created": False,
                 },
             )
-        return {"ok": True, "id": memory.id}
+        # The capture screen is the only credential control in the system, and a
+        # fact can reach here without having passed it (staged before the screen
+        # existed, forced through, or hand-added to the registry). Re-check at the
+        # one point a human is looking, and say so rather than silently allowing.
+        warning = screen.sensitivity(memory.fact)
+        result = {"ok": True, "id": memory.id}
+        if warning:
+            result["warning"] = f"this fact {warning}"
+        return result
 
 
 def reject(store: Store, memory_id: str, *, reason: str = "") -> dict:

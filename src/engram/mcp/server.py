@@ -38,7 +38,11 @@ def remember(fact: str, kind: str = "preference", confidence: float = 0.6) -> st
     from engram.capture.active import stage
 
     try:
-        result = stage(_store(), fact, kind=_kind(kind), confidence=confidence)
+        # retire=False: an agent proposes, a human disposes. A contradiction
+        # captured here is filed for review, never applied - otherwise recall()
+        # plus one remember() would be an erasure primitive for any agent that
+        # read a malicious instruction.
+        result = stage(_store(), fact, kind=_kind(kind), confidence=confidence, retire=False)
     except CaptureRefused as e:  # pragma: no cover - stage() reports, never raises
         raise ToolError(str(e)) from e
     if not result.admitted:
@@ -46,10 +50,13 @@ def remember(fact: str, kind: str = "preference", confidence: float = 0.6) -> st
 
     memory = result.memory
     message = f"staged {memory.id}: [{memory.kind.value}] {memory.fact}"
-    if result.superseded:
-        # The agent that just learned the new fact is the one best placed to tell
-        # the user an older one was retired, so say it in the tool result.
-        message += f"\nretired from recall pending review: {', '.join(result.superseded)}"
+    if result.disputed:
+        # The agent that just learned the new fact is best placed to tell the
+        # user an older one now looks wrong, so say it in the tool result.
+        message += (
+            f"\ncontradicts {', '.join(result.disputed)}, still in recall "
+            f"until reviewed (engram queue)"
+        )
     return message
 
 

@@ -99,7 +99,11 @@ def contradicts(new_fact: str, old_fact: str) -> str | None:
 
 
 def flag_contradicted(
-    store: Store, candidate: Memory, *, promoted: list[Memory] | None = None
+    store: Store,
+    candidate: Memory,
+    *,
+    promoted: list[Memory] | None = None,
+    retire: bool = True,
 ) -> tuple[str, ...]:
     """Retire every promoted fact ``candidate`` contradicts; return their ids.
 
@@ -112,11 +116,19 @@ def flag_contradicted(
     the registry hand it over rather than pay for a second parse. Outside the
     lock it would be a stale snapshot, so callers that do not hold one omit it.
 
+    ``retire`` decides whether the older fact actually leaves recall. Dropping a
+    reviewed fact is a write on knowledge a human approved, so an agent may not
+    do it unilaterally: with ``retire=False`` the contradiction is filed for
+    review and the old fact stays promoted. Without that split, ``recall`` plus
+    one ``remember("<noun> was removed")`` would let any connected agent erase
+    an arbitrary memory - less authorisation than promoting one takes, which is
+    backwards.
+
     Retiring is two writes - drop the fact out of recall, then file it for
-    review - and the second failing is the dangerous half. A fact left ``stale``
-    with no queue entry is gone from recall *and* absent from the review set, so
-    nobody is ever asked about it again. The registry write is therefore undone
-    if the queue write fails, mirroring the promotion bridge.
+    review - and the second failing is the dangerous half. A fact left
+    ``superseded`` with no queue entry is gone from recall *and* absent from the
+    review set, so nobody is ever asked about it again. The registry write is
+    therefore undone if the queue write fails, mirroring the promotion bridge.
     """
     root = getattr(store, "root", None)
     lock = store_lock(root) if root is not None else contextlib.nullcontext()
@@ -128,6 +140,12 @@ def flag_contradicted(
                 continue
             reason = contradicts(candidate.fact, existing.fact)
             if reason is None:
+                continue
+            if not retire:
+                store.enqueue(
+                    existing, dest="memory.md", reason=f"disputed by {candidate.id}: {reason}"
+                )
+                flagged.append(existing.id)
                 continue
             retired = existing.model_copy(
                 update={"status": Status.superseded, "risk_tier": tiers.TIER_CURATED}

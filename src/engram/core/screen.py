@@ -127,8 +127,51 @@ _LOCATOR = re.compile(
 )
 
 
+# Credential formats recognisable on sight. A fact carrying one of these is
+# carrying the secret itself, which no amount of surrounding phrasing excuses.
+_SECRET_LITERAL = re.compile(
+    r"(?:\bgh[pousr]_[A-Za-z0-9]{16,}"
+    r"|\bgithub_pat_[A-Za-z0-9_]{20,}"
+    r"|\bsk-[A-Za-z0-9-]{12,}"
+    r"|\bxox[baprs]-[A-Za-z0-9-]{10,}"
+    r"|\bAKIA[0-9A-Z]{16}\b"
+    r"|\bAIza[A-Za-z0-9_-]{30,}"
+    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    r"|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.)"
+)
+
+# Words that describe a credential's condition rather than reveal it. "the token
+# was revoked" is an incident note, not a disclosure, and the store is full of
+# them; without this the value rule swallows the whole category.
+_CONDITION = (
+    r"(?:expired?|revoked?|invalid|valid|missing|absent|present|required|optional"
+    r"|rotated?|set|unset|empty|correct|wrong|stale|fresh|active|inactive|enabled"
+    r"|disabled|working|broken|null|none|unchanged|refreshed?|configured|stored)"
+)
+
+# "<credential> is <value>" / "<credential>: <value>" / "SECRET_KEY=<value>".
+# Stating a value never needs locating language, so this must not require a
+# locator - that omission is what let a live token through.
+_ASSIGNED = re.compile(
+    r"(?i)(?:passwords?|passphrases?|secrets?|api[\s_-]?keys?|access\s+keys?"
+    r"|private\s+keys?|ssh\s+keys?|credentials?|tokens?)"
+    rf"\s*(?:\bis\b|\bwas\b|[:=])\s*[`\"']?(?!{_CONDITION}\b)\S{{4,}}"
+)
+
+# An assignment to a credential-shaped environment variable name.
+_SECRET_ENV = re.compile(r"\b[A-Z][A-Z0-9_]*(?:SECRET|PASSWORD|TOKEN|API_KEY|passwd)[A-Z0-9_]*\s*=")
+
+
 def sensitivity(fact: str) -> str | None:
-    """Why ``fact`` maps the user's credentials, or ``None`` if it does not."""
+    """Why ``fact`` exposes the user's credentials, or ``None`` if it does not.
+
+    Two separate hazards, caught separately because they read nothing alike:
+    a fact that *carries* a secret, and a fact that *maps* where one lives.
+    """
+    if _SECRET_LITERAL.search(fact) or _SECRET_ENV.search(fact):
+        return "contains something shaped like a live credential"
+    if _ASSIGNED.search(fact):
+        return "states a credential's value; engram is not a place to keep secrets"
     names_a_credential = _CREDENTIAL_TERM.search(fact) or _QUALIFIED_TOKEN.search(fact)
     if names_a_credential and _LOCATOR.search(fact):
         return "names or locates a credential; engram is not a place to map secrets"

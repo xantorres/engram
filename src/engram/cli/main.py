@@ -269,10 +269,19 @@ def promote(memory_id: str, confirm: bool = typer.Option(False, "--confirm")) ->
     """Approve a memory awaiting review (requires --confirm)."""
     from engram.bridge import review
 
-    result = review.approve(_store(), memory_id, confirm=confirm)
+    store = _store()
+    # Show what is being approved. --confirm is otherwise a blind rubber-stamp on
+    # an id, and ids arrive from scripts and suggestions as often as from reading.
+    memory = store.get(memory_id)
+    if memory is not None:
+        typer.echo(f"{memory.id} [{memory.status.value}/{memory.kind.value}] {memory.fact}")
+
+    result = review.approve(store, memory_id, confirm=confirm)
     if not result["ok"]:
         typer.echo(result["error"])
         raise typer.Exit(1)
+    if result.get("warning"):
+        typer.echo(f"warning: {result['warning']}")
     typer.echo(f"promoted {result['id']}")
 
 
