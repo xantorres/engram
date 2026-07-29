@@ -1,16 +1,50 @@
 # Engram
 
-**An agent-agnostic memory layer.** Capture facts about you and your work from *any* coding agent, review them on your terms, and recall them everywhere.
+**Agent memory that knows when it's wrong.**
 
-One local store your coding agents write to and read from — kept as plain Markdown you own, served over the [Model Context Protocol](https://modelcontextprotocol.io). Works with Claude Code, Codex, opencode, and any MCP-capable client, driving cloud or local models (LM Studio, Ollama) alike.
+Your agent remembers that `codegraph` is your primary tool. You uninstalled it six weeks ago. Nothing noticed — so every session since has opened by telling the model a confident, false thing about your own machine.
+
+```console
+$ engram recall
+mem-0001  [tooling]  codegraph is my primary code-graph tool
+
+# six weeks later
+$ engram remember "I uninstalled codegraph"
+staged mem-0002: [tooling] I uninstalled codegraph
+retired from recall pending review: mem-0001  (engram show <id> to resolve)
+
+$ engram recall
+$ engram queue
+mem-0001  [tooling]  codegraph is my primary code-graph tool
+          (superseded by mem-0002: 'codegraph' is reported gone, but this fact still asserts it)
+```
+
+Storing facts is the easy half. The half nobody does is noticing when a stored fact stops being true. The old fact isn't deleted — it drops out of recall and waits for you to rule on it.
+
+One local store every agent reads from and writes to — plain Markdown you own, served over the [Model Context Protocol](https://modelcontextprotocol.io). Works with Claude Code, Codex, opencode, and any MCP-capable client.
 
 > **Status:** early development. The core engine and MCP server are being built in the open. APIs will change.
 
 ## Why
 
-Coding agents forget everything between sessions. Workarounds exist, but each is locked to one tool: every harness has its own memory, and none of them share. And the ones that do remember will happily store *anything* — including things you'd never want written down automatically.
+Coding agents forget everything between sessions. Every harness ships its own memory, none of them share, and all of them have the same blind spot: a fact, once stored, is treated as true forever. Memory that only accumulates doesn't get smarter — it gets more confidently wrong, and it degrades invisibly. Nothing errors. Recall keeps working. The facts just quietly stop being true.
 
-Engram is the shared brain: **one** local store every agent reads from and writes to, with **you** as the gatekeeper for anything sensitive.
+Engram gives facts a lifecycle instead: captured, reviewed, recalled, contradicted, retired. You stay the gatekeeper for anything sensitive.
+
+**What it does and doesn't catch.** Engram notices a contradiction when evidence arrives — a removal, a swapped value, two facts claiming one exclusive role — and expires facts on a decay horizon. It does not poll your machine to re-verify what it already believes. If a tool disappears and nothing ever captures that it's gone, only decay will catch it.
+
+## Your memory never leaves your laptop
+
+Extraction runs against **your** model on **your** hardware — LM Studio, Ollama, or any OpenAI-compatible endpoint. There is no account, no server, no telemetry, and no cloud tier that eventually gets your data.
+
+```toml
+# ~/.config/engram/config.toml
+[extractor]
+base_url = "http://localhost:1234/v1"   # LM Studio
+model = "qwen3.6-35b-a3b"
+```
+
+This is not a privacy mode you switch on. It is the only mode there is.
 
 ## How it works
 
@@ -77,7 +111,7 @@ A `CLAUDE.md` is hand-written **instructions for one tool** — *how* an agent s
 | Holds | Instructions & policy you write | Facts captured about you and your work |
 | Scope | One tool, one repo | Every agent, one shared store |
 | Trust | Anything written is instantly live | Sensitive facts gated behind your approval |
-| Lifecycle | Static; goes stale silently | `confidence`, `decay`, `last_verified`, dedup, conflict flags, `doctor` |
+| Lifecycle | Static; goes stale silently | Contradicted facts retire themselves; `decay`, `confidence`, `last_verified`, `doctor` |
 | Upkeep | You type it all by hand | Auto-harvested from past sessions |
 
 Use a `CLAUDE.md` for *how to behave*; use Engram for *what's true about you* — especially once you have more than one agent and facts you don't want auto-written.
@@ -88,11 +122,12 @@ Most memory tools are vector stores the agent writes to directly. Engram takes a
 
 | | Typical memory tool | Engram |
 |---|---|---|
+| Stale facts | Stored forever, recalled as current | Contradiction retires them; decay expires the rest |
 | Capture | Agent writes directly | Federated across the agents you already use |
 | Trust | Whatever the agent stored | Human review gate on sensitive writes |
 | Storage | Vector DB | Plain Markdown + YAML you own, git-diffable |
-| Hosting | Often cloud | Local-first, no telemetry |
-| Models | Provider-specific | Any OpenAI-compatible endpoint |
+| Hosting | Often cloud | Local-first, no account, no telemetry |
+| Models | Provider-specific | Any OpenAI-compatible endpoint, including local |
 
 ## Supported clients
 
@@ -138,7 +173,8 @@ command = "engram-mcp"
 
 ## Design principles
 
-- **Local-first.** Your memories never leave your machine. No telemetry.
+- **Facts expire.** Contradiction, supersession and decay are the product, not maintenance bolted on later.
+- **Local-first.** Your memories never leave your machine. No account, no telemetry.
 - **You own the data.** Plain Markdown + YAML, git-diffable, no database lock-in.
 - **Human in the loop.** Tiered writes: auto-log the trivial, gate the sensitive.
 - **Bring your own model.** Any OpenAI-compatible endpoint extracts memories — cloud or local.
