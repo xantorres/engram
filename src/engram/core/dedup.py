@@ -35,6 +35,31 @@ _COMPOUND = re.compile(r"[a-z0-9]+(?:[-_][a-z0-9]+)+")
 _DUP_THRESHOLD = 0.5
 _CONFLICT_OVERLAP = 0.34
 
+# Words that assert a role rather than name a subject. Two facts agreeing on
+# nothing but these have matched a sentence frame, not a topic.
+MARKER_TOKENS = frozenset(
+    {
+        "primary",
+        "sole",
+        "only",
+        "main",
+        "default",
+        "preferred",
+        "current",
+        "currently",
+        "replace",
+        "replaces",
+        "replaced",
+        "replacing",
+        "supersede",
+        "supersedes",
+        "instead",
+    }
+)
+
+# Short words are too common to prove two facts share a subject ("tool", "user").
+MIN_ANCHOR_LEN = 6
+
 # Two short facts built from the same sentence frame - "the user runs on X" and
 # "the user runs on Y" - overlap on everything except the one word that *is* the
 # fact, which is enough ratio to look identical. Requiring a few shared words in
@@ -53,15 +78,38 @@ def _keep(word: str) -> bool:
     return len(word) >= 3 and word not in _STOPWORDS
 
 
+def _stem(word: str) -> str:
+    """Strip a common inflection so ``prefers`` and ``prefer`` compare equal.
+
+    Deliberately crude: both facts are tokenized the same way, so an over-eager
+    strip costs nothing as long as it is consistent. Without it a plural and its
+    singular look like two different words, which reads as a substituted value.
+    """
+    for suffix in ("ing", "ed", "es", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[: -len(suffix)]
+    return word
+
+
 def salient_tokens(text: str) -> set[str]:
     lowered = text.lower()
-    out = {w for w in re.findall(r"[a-z0-9]+", lowered) if _keep(w)}
+    out = {_stem(w) for w in re.findall(r"[a-z0-9]+", lowered) if _keep(w)}
     out.update(
-        joined
+        _stem(joined)
         for compound in _COMPOUND.findall(lowered)
         if _keep(joined := _SEPARATORS.sub("", compound))
     )
     return out
+
+
+def _anchor(ta: set[str], tb: set[str]) -> str | None:
+    candidates = [t for t in (ta & tb) - MARKER_TOKENS if len(t) >= MIN_ANCHOR_LEN]
+    return max(candidates, key=len) if candidates else None
+
+
+def shared_anchor(a: str, b: str) -> str | None:
+    """The longest distinctive token both facts name, if any."""
+    return _anchor(salient_tokens(a), salient_tokens(b))
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:
@@ -85,5 +133,12 @@ def compare(a: str, b: str) -> str:
     if overlap >= _CONFLICT_OVERLAP and (pa or pb) and pa != pb:
         return "conflict"
     if overlap >= _DUP_THRESHOLD and shared >= _MIN_SHARED_TOKENS and pa == pb:
+        # Agreeing on the frame is not agreeing on the answer. When each fact
+        # holds a word the other lacks and nothing distinctive is shared, the
+        # subject itself is what differs: one value was substituted for another.
+        # Calling that a duplicate drops the correction and leaves the fact it
+        # corrected in recall, which is how a retired tool stays "current".
+        if (ta - tb) and (tb - ta) and _anchor(ta, tb) is None:
+            return "conflict"
         return "duplicate"
     return "distinct"

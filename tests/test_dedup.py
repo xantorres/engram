@@ -127,3 +127,36 @@ def test_a_real_paraphrase_still_survives_the_overlap_floor():
 def test_a_compound_keeps_its_parts_as_tokens():
     tokens = dedup.salient_tokens("the code-graph layer")
     assert {"code", "graph", "codegraph"} <= tokens
+
+
+def test_a_substituted_value_is_not_a_duplicate():
+    # The incident this guards: a replacement tool read as a restatement of the
+    # tool it replaced, so the correction was dropped and the stale fact stayed
+    # in recall. The two facts share only the sentence frame.
+    assert (
+        dedup.compare(
+            "The user currently uses codebase-memory as their primary tool",
+            "The user currently uses codegraph as their primary tool",
+        )
+        == "conflict"
+    )
+
+
+def test_sharing_a_distinctive_token_still_reads_as_one_fact():
+    # Both name the same library, so the extra qualifiers are detail, not a
+    # different answer -- this must not become a conflict.
+    assert (
+        dedup.compare(
+            "The user works on the Acme-Org/acme-react-ui-library repository.",
+            "User works on the acme/acme-react-ui-library project",
+        )
+        == "duplicate"
+    )
+
+
+def test_a_frame_word_cannot_anchor_two_facts_together():
+    assert dedup.shared_anchor("uses codegraph currently", "uses codebasememory currently") is None
+
+
+def test_a_distinctive_shared_token_anchors():
+    assert dedup.shared_anchor("the codegraph layer", "codegraph is installed") == "codegraph"

@@ -7,9 +7,10 @@ an agent has no way to know the confident answer is stale.
 
 Three signals are treated as contradiction, all deliberately narrow:
 
-* **value divergence** - the same subject carrying a different precise value
-  (a VAT number, a date, an identifier). :mod:`engram.core.dedup` already finds
-  these.
+* **value divergence** - the same subject carrying a different value, whether a
+  precise one (a VAT number, a date, an identifier) or a plain substitution
+  where two facts share only their sentence frame and disagree on the subject
+  itself. :mod:`engram.core.dedup` finds both.
 * **exclusive-role collision** - both facts claim a role only one thing can hold
   ("primary", "sole", "default") and they share a distinctive subject token.
 * **removal** - the new fact says something is gone ("removed", "uninstalled",
@@ -49,46 +50,14 @@ _REMOVAL = re.compile(
     r"|decommissioned|no\s+longer|not\s+installed|gone)\b"
 )
 
-# The shared token that proves two claims are about the same subject.
-# Short words are too common to carry that weight ("tool", "user", "file").
-_MIN_ANCHOR_LEN = 6
-
-_MARKER_TOKENS = frozenset(
-    {
-        "primary",
-        "sole",
-        "only",
-        "main",
-        "default",
-        "preferred",
-        "current",
-        "currently",
-        "replace",
-        "replaces",
-        "replaced",
-        "replacing",
-        "supersede",
-        "supersedes",
-        "instead",
-    }
-)
-
-
-def _shared_anchor(a: str, b: str) -> str | None:
-    """The longest distinctive token both facts name, if any."""
-    shared = (dedup.salient_tokens(a) & dedup.salient_tokens(b)) - _MARKER_TOKENS
-    candidates = [t for t in shared if len(t) >= _MIN_ANCHOR_LEN]
-    return max(candidates, key=len) if candidates else None
-
-
 def contradicts(new_fact: str, old_fact: str) -> str | None:
     """Why ``new_fact`` retires ``old_fact``, or ``None`` if they can coexist."""
     verdict = dedup.compare(new_fact, old_fact)
     if verdict == "duplicate":
         return None
     if verdict == "conflict":
-        return "a precise value diverges"
-    anchor = _shared_anchor(new_fact, old_fact)
+        return "the same subject carries a different value"
+    anchor = dedup.shared_anchor(new_fact, old_fact)
     if anchor is None:
         return None
     if _REMOVAL.search(new_fact):
