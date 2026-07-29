@@ -108,6 +108,22 @@ def test_unrelated_versioned_facts_are_not_a_conflict():
     )
 
 
+def test_short_facts_differing_only_in_the_key_noun_stay_distinct():
+    """Boilerplate alone must never carry a duplicate verdict.
+
+    "runs on X" and "runs on Y" share everything but the one word that is the
+    entire fact. Calling those duplicates drops the second at capture.
+    """
+    assert dedup.compare("The user runs on OpenBSD.", "The user runs on macOS.") == "distinct"
+    assert dedup.compare("The user's editor is helix", "The user's editor is kakoune") == "distinct"
+
+
+def test_a_real_paraphrase_still_survives_the_overlap_floor():
+    assert (
+        dedup.compare("I prefer pnpm over npm", "Prefers pnpm over npm for installs") == "duplicate"
+    )
+
+
 def test_a_compound_keeps_its_parts_as_tokens():
     tokens = dedup.salient_tokens("the code-graph layer")
     assert {"code", "graph", "codegraph"} <= tokens

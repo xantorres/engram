@@ -35,6 +35,12 @@ _COMPOUND = re.compile(r"[a-z0-9]+(?:[-_][a-z0-9]+)+")
 _DUP_THRESHOLD = 0.5
 _CONFLICT_OVERLAP = 0.34
 
+# Two short facts built from the same sentence frame - "the user runs on X" and
+# "the user runs on Y" - overlap on everything except the one word that *is* the
+# fact, which is enough ratio to look identical. Requiring a few shared words in
+# absolute terms means agreement has to rest on more than the frame.
+_MIN_SHARED_TOKENS = 3
+
 
 def precision_tokens(text: str) -> set[str]:
     out: set[str] = set()
@@ -68,11 +74,16 @@ def _jaccard(a: set[str], b: set[str]) -> float:
 
 def compare(a: str, b: str) -> str:
     """Return ``"duplicate"``, ``"conflict"``, or ``"distinct"`` for two facts."""
-    overlap = _jaccard(salient_tokens(a), salient_tokens(b))
+    ta, tb = salient_tokens(a), salient_tokens(b)
+    overlap = _jaccard(ta, tb)
+    shared = len(ta & tb)
     pa, pb = precision_tokens(a), precision_tokens(b)
 
+    # The floor guards sameness only. A conflict already rests on two precise
+    # values disagreeing, which is evidence in itself - "VAT is 123" against
+    # "VAT is 999" shares little else, and should still be caught.
     if overlap >= _CONFLICT_OVERLAP and (pa or pb) and pa != pb:
         return "conflict"
-    if overlap >= _DUP_THRESHOLD and pa == pb:
+    if overlap >= _DUP_THRESHOLD and shared >= _MIN_SHARED_TOKENS and pa == pb:
         return "duplicate"
     return "distinct"
