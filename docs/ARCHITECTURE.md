@@ -16,8 +16,9 @@ capture/ extract/ <- active remember + transcript harvest; pluggable extractor L
 ## Core (`core/`)
 
 - **`schema.py`** defines `Memory` (the `memory.v1` model): one atomic fact plus
-  provenance (`source`, `learned_by`, `confidence`), lifecycle (`status`,
-  `last_verified`, `decay`), and the `risk_tier` that governs its write.
+  provenance (`source`, `learned_by`, `confidence`, `project`), lifecycle
+  (`status`, `last_verified`, `decay`), and the `risk_tier` that governs its
+  write.
 - **`store.py`** is the `Store` interface and the default `MarkdownStore`, which
   keeps everything as plain Markdown + YAML: a `memory.md` registry, an
   append-only `memory-log.md`, and a `queue/` of items awaiting review.
@@ -25,9 +26,25 @@ capture/ extract/ <- active remember + transcript harvest; pluggable extractor L
   edits require confirmation. Sensitive kinds and conflicts are always tier 3.
 - **`atomic.py`** writes through a temp file + `os.replace`, snapshots the prior
   content for single-step undo, and appends an audit record.
-- **`dedup.py`** decides duplicate vs conflict vs distinct using token overlap
-  and exact-match "precision tokens" (ids, dates, money).
+- **`dedup.py`** decides duplicate vs conflict vs distinct. Facts about one
+  subject are separated by the *direction* of their divergence: a restatement
+  adds detail on one side, while a substitution leaves each side holding a word
+  the other lacks and nothing distinctive shared. Divergent "precision tokens"
+  (ids, dates, money) force a conflict at a lower overlap. It also owns the
+  anchor test — the longest distinctive non-marker token two facts share — which
+  is what proves they are talking about the same thing.
+- **`screen.py`** is the capture gate: it turns away trivia, credentials, and
+  facts already in the store before anything is written.
+- **`supersede.py`** decides when a newly captured fact retires one already in
+  recall, on three narrow signals: a diverging value, two facts claiming one
+  exclusive role, and an explicit removal ("uninstalled", "no longer"). The
+  retired fact goes to review, never to the bin, and an agent cannot retire a
+  reviewed fact unilaterally.
 - **`freshness.py`** parses decay horizons and decides staleness.
+- **`gc.py`** is the retention sweep: prune `.bak`, rotate the audit log,
+  archive rejected and long-stale facts, and re-dedup the promoted set. Without
+  it a store grows without bound — undo history outweighs the memory it protects
+  by orders of magnitude within weeks.
 
 ## Capture (`capture/`, `extract/`)
 
@@ -61,9 +78,15 @@ through the same atomic path, leaving an audit entry and a working undo token.
 
 ## Recall (`recall/`)
 
-`rank()` returns promoted, fresh memories ordered by relevance. `context.py`
-renders a delimited memory block that can be refreshed in place inside an
-`AGENTS.md` or `CLAUDE.md` file.
+`rank()` returns promoted, fresh memories ordered by relevance, optionally
+narrowed to one project — a scoped recall keeps unscoped facts too, so a project
+context still carries the user's universal preferences. `context.py` renders a
+delimited memory block that can be refreshed in place inside an `AGENTS.md` or
+`CLAUDE.md` file.
+
+`refresh.py` rewrites those blocks whenever promoted state changes, so a
+materialized block cannot drift behind the live MCP resource. See
+[RECALL.md](RECALL.md) for which surface is computed and which is cached.
 
 ## Surfaces (`cli/`, `mcp/`)
 
