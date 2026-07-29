@@ -90,10 +90,18 @@ def plan(
     already_filed = {
         item["memory"]["id"] for item in store.queue_list() if isinstance(item.get("memory"), dict)
     }
-    selected = _select(store.list(status=Status.pending), ids=ids, kinds=kinds, limit=limit)
+    # Drop the filed ones before the limit applies, not after. They stay pending,
+    # so they resurface on every run; counting them against the limit spends the
+    # batch on facts this pass will skip anyway, and a backlog whose queue is
+    # larger than the limit would route nothing at all - a bounded run that
+    # silently does no work.
+    pending = [
+        candidate
+        for candidate in store.list(status=Status.pending)
+        if candidate.id not in already_filed
+    ]
+    selected = _select(pending, ids=ids, kinds=kinds, limit=limit)
     for candidate in selected:
-        if candidate.id in already_filed:
-            continue
         verdict, against = _dedup_against(candidate, promoted)
         if verdict == "duplicate":
             result.routes.append(Route(candidate, "skip", f"already known ({against})"))

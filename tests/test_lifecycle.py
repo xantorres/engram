@@ -199,6 +199,29 @@ def test_plan_limit_zero_selects_nothing(tmp_path):
     assert bridge.plan(store, limit=0).routes == []
 
 
+def test_plan_limit_counts_candidates_it_can_act_on(tmp_path):
+    """A limit must fill from unfiled candidates, not be spent on filed ones.
+
+    Queued candidates stay pending, so they reappear in the pending list on every
+    run. If the limit is applied before they are excluded, a backlog with a large
+    queue hands back a full slice of already-filed facts and routes none of them,
+    making every bounded run a silent no-op.
+    """
+    store = _store(
+        tmp_path,
+        *(Memory(fact=f"uses tool number {n} for builds", kind=Kind.tooling) for n in range(6)),
+    )
+    filed = store.list(status=Status.pending)[:4]
+    for mem in filed:
+        store.enqueue(mem, dest="memory.md", reason="flagged for review at capture")
+
+    result = bridge.plan(store, limit=2)
+
+    assert len(result.routes) == 2
+    routed = {route.memory.id for route in result.routes}
+    assert routed.isdisjoint({mem.id for mem in filed})
+
+
 def test_plan_still_dedups_against_the_whole_promoted_set(tmp_path):
     """Filtering narrows the candidates, never the facts they are compared to."""
     store = _store(
