@@ -83,8 +83,17 @@ def plan(
     """
     promoted = store.list(status=Status.promoted)
     result = PromotionResult()
+    # Queueing escalates the tier but leaves the status pending, so an already
+    # filed candidate would be re-selected on the next run and re-enqueued with
+    # the generic capture-time reason, erasing the specific one that explained
+    # why it was escalated. It is already awaiting the same human; leave it be.
+    already_filed = {
+        item["memory"]["id"] for item in store.queue_list() if isinstance(item.get("memory"), dict)
+    }
     selected = _select(store.list(status=Status.pending), ids=ids, kinds=kinds, limit=limit)
     for candidate in selected:
+        if candidate.id in already_filed:
+            continue
         verdict, against = _dedup_against(candidate, promoted)
         if verdict == "duplicate":
             result.routes.append(Route(candidate, "skip", f"already known ({against})"))
@@ -165,7 +174,11 @@ def apply(
                         atomic.restore_from_bak(undo_token, root=root)
                     raise
             elif route.action == "skip":
+                # Resolve the queue too: a rejected fact whose envelope survives
+                # stays promotable from that envelope, which is how a duplicate
+                # comes back after being ruled out.
                 store.update(candidate.model_copy(update={"status": Status.rejected}))
+                store.resolve_queue(candidate.id)
     result.applied = True
     return result
 

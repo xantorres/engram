@@ -113,13 +113,13 @@ def test_a_shared_subject_without_exclusivity_does_not_contradict():
 # ---------------------------------------------------------------------------
 
 
-def test_capture_marks_the_contradicted_fact_stale(tmp_path):
+def test_capture_marks_the_contradicted_fact_superseded(tmp_path):
     store = MarkdownStore(tmp_path)
     old = store.add(_promoted(OLD_PRIMARY, kind=Kind.tooling))
 
     remember(store, NEW_PRIMARY, kind=Kind.tooling)
 
-    assert store.get(old.id).status == Status.stale
+    assert store.get(old.id).status == Status.superseded
 
 
 def test_a_superseded_fact_stops_being_recalled(tmp_path):
@@ -185,20 +185,20 @@ def test_harvest_supersedes_too(tmp_path):
 
     result = harvest_session(store, fixture, harness="claude-code", extractor=Stub())
 
-    assert store.get(old.id).status == Status.stale
+    assert store.get(old.id).status == Status.superseded
     assert old.id in result["superseded"]
 
 
 # ---------------------------------------------------------------------------
-# Recovering a stale fact
+# Recovering a superseded fact
 # ---------------------------------------------------------------------------
 
 
-def test_a_stale_fact_can_be_re_verified(tmp_path):
+def test_a_superseded_fact_can_be_re_verified(tmp_path):
     from engram.bridge import review
 
     store = MarkdownStore(tmp_path)
-    mem = store.add(Memory(fact="prefers pnpm", status=Status.stale))
+    mem = store.add(Memory(fact="prefers pnpm", status=Status.superseded))
 
     result = review.approve(store, mem.id, confirm=True, today=dt.date(2026, 7, 29))
 
@@ -206,6 +206,17 @@ def test_a_stale_fact_can_be_re_verified(tmp_path):
     refreshed = store.get(mem.id)
     assert refreshed.status == Status.promoted
     assert refreshed.last_verified == dt.date(2026, 7, 29)
+
+
+def test_a_decayed_fact_can_also_be_re_verified(tmp_path):
+    """`stale` stays promotable too - both are awaiting the same human call."""
+    from engram.bridge import review
+
+    store = MarkdownStore(tmp_path)
+    mem = store.add(Memory(fact="prefers pnpm", status=Status.stale))
+
+    assert review.approve(store, mem.id, confirm=True, today=dt.date(2026, 7, 29))["ok"]
+    assert store.get(mem.id).status == Status.promoted
 
 
 # ---------------------------------------------------------------------------
@@ -256,5 +267,35 @@ def test_recall_ranks_a_freshly_verified_fact_above_a_decayed_one(tmp_path):
 
 
 def test_doctor_reports_superseded_memories():
-    mem = Memory(id="mem-0001", fact="uses codegraph as their primary tool", status=Status.stale)
+    mem = Memory(
+        id="mem-0001", fact="uses codegraph as their primary tool", status=Status.superseded
+    )
     assert doctor([mem])["superseded"] == ["mem-0001"]
+
+
+def test_decayed_and_contradicted_are_different_states():
+    """Two unrelated ways a fact stops being true; conflating them loses one.
+
+    A fact past its decay horizon has merely gone unconfirmed - time did that,
+    and re-verifying it is routine. A superseded fact was actively contradicted
+    by newer evidence. Sharing one status would let a sweep that retires the
+    forgotten also silently retire the disputed.
+    """
+    decayed = Memory(
+        id="mem-0001",
+        fact="uses tmux for terminal multiplexing",
+        status=Status.promoted,
+        decay="30d",
+        last_verified=dt.date(2026, 1, 1),
+    )
+    contradicted = Memory(id="mem-0002", fact="uses codegraph", status=Status.superseded)
+
+    report = doctor([decayed, contradicted], today=dt.date(2026, 7, 29))
+
+    assert report["stale"] == ["mem-0001"]
+    assert report["superseded"] == ["mem-0002"]
+
+
+def test_a_superseded_fact_is_not_reported_as_merely_decayed():
+    contradicted = Memory(id="mem-0002", fact="uses codegraph", status=Status.superseded)
+    assert doctor([contradicted])["stale"] == []

@@ -167,11 +167,24 @@ def test_forced_credential_capture_can_never_auto_promote(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+# A genuine restatement: same subject, same claim, different wording. Kept
+# symmetric so the pair does not depend on which side says "the user".
+KNOWN = "The user prefers pnpm over npm for package installs"
+RESTATED = "The user prefers pnpm over npm for installing packages"
+
+
+def test_the_restated_pair_really_is_a_duplicate():
+    """Guards the fixture below: if this stops holding, those tests go vacuous."""
+    from engram.core import dedup
+
+    assert dedup.compare(RESTATED, KNOWN) == "duplicate"
+
+
 def test_remember_refuses_a_fact_already_in_the_store(tmp_path):
     store = MarkdownStore(tmp_path)
-    first = remember(store, "The user prefers pnpm over npm for package installs")
+    first = remember(store, KNOWN)
 
-    result = stage(store, "Prefers pnpm over npm for installing packages")
+    result = stage(store, RESTATED)
 
     assert not result.admitted
     assert result.duplicate_of == first.id
@@ -180,23 +193,18 @@ def test_remember_refuses_a_fact_already_in_the_store(tmp_path):
 
 def test_remember_force_overrides_the_duplicate_check(tmp_path):
     store = MarkdownStore(tmp_path)
-    remember(store, "The user prefers pnpm over npm for package installs")
+    remember(store, KNOWN)
 
-    remember(store, "Prefers pnpm over npm for installing packages", force=True)
+    remember(store, RESTATED, force=True)
 
     assert len(store.list()) == 2
 
 
 def test_rejected_facts_do_not_block_relearning(tmp_path):
     store = MarkdownStore(tmp_path)
-    store.add(
-        Memory(
-            fact="The user prefers pnpm over npm for package installs",
-            status=Status.rejected,
-        )
-    )
+    store.add(Memory(fact=KNOWN, status=Status.rejected))
 
-    mem = remember(store, "Prefers pnpm over npm for installing packages")
+    mem = remember(store, RESTATED)
 
     assert mem.status == Status.pending
 

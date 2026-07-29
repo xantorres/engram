@@ -278,11 +278,17 @@ def promote(memory_id: str, confirm: bool = typer.Option(False, "--confirm")) ->
 
 @app.command()
 def reject(memory_id: str, reason: str = typer.Option("", "--reason")) -> None:
-    """Reject a queued memory."""
+    """Reject a memory awaiting review."""
     from engram.bridge import review
 
     result = review.reject(_store(), memory_id, reason=reason)
-    typer.echo(f"rejected {memory_id}" if result["ok"] else result["error"])
+    if not result["ok"]:
+        typer.echo(result["error"])
+        raise typer.Exit(1)
+    message = f"rejected {memory_id}"
+    if result["undo_token"]:
+        message += f"  undo_token={result['undo_token']}"
+    typer.echo(message)
 
 
 @app.command()

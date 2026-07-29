@@ -51,7 +51,9 @@ def test_cli_remember_reports_an_existing_duplicate(tmp_path, monkeypatch):
     store = _env(tmp_path, monkeypatch)
     store.add(Memory(fact="The user prefers pnpm over npm for package installs"))
 
-    result = runner.invoke(app, ["remember", "Prefers pnpm over npm for installing packages"])
+    result = runner.invoke(
+        app, ["remember", "The user prefers pnpm over npm for installing packages"]
+    )
 
     assert result.exit_code != 0
     assert "already known" in result.stdout
@@ -92,7 +94,7 @@ def test_cli_harvest_reports_sensitive_skips(tmp_path, monkeypatch):
 
 def test_cli_doctor_reports_superseded(tmp_path, monkeypatch):
     store = _env(tmp_path, monkeypatch)
-    mem = store.add(Memory(fact="uses codegraph as their primary tool", status=Status.stale))
+    mem = store.add(Memory(fact="uses codegraph as their primary tool", status=Status.superseded))
 
     result = runner.invoke(app, ["doctor"])
 

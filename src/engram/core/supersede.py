@@ -28,11 +28,13 @@ edit the user's sentence for them - it can only stop asserting it and ask.
 
 from __future__ import annotations
 
+import contextlib
 import re
 
-from engram.core import dedup, tiers
+from engram.core import atomic, dedup, tiers
+from engram.core.locking import store_lock
 from engram.core.schema import Memory, Status
-from engram.core.store import Store
+from engram.core.store import MarkdownStore, Store
 
 # Words that assert a role only one filler can occupy at a time.
 _EXCLUSIVE = re.compile(
@@ -106,21 +108,43 @@ def flag_contradicted(
     rejected. Nothing is deleted and the newcomer is not promoted in its place -
     resolving the collision stays a human call.
 
-    ``promoted`` lets a caller that has already loaded the registry hand it over
-    rather than pay for a second parse. Pass it only when the snapshot predates
-    no other retirement, otherwise a fact can be retired twice.
+    ``promoted`` lets a caller that already holds the store lock and has loaded
+    the registry hand it over rather than pay for a second parse. Outside the
+    lock it would be a stale snapshot, so callers that do not hold one omit it.
+
+    Retiring is two writes - drop the fact out of recall, then file it for
+    review - and the second failing is the dangerous half. A fact left ``stale``
+    with no queue entry is gone from recall *and* absent from the review set, so
+    nobody is ever asked about it again. The registry write is therefore undone
+    if the queue write fails, mirroring the promotion bridge.
     """
+    root = getattr(store, "root", None)
+    lock = store_lock(root) if root is not None else contextlib.nullcontext()
     flagged: list[str] = []
-    for existing in promoted if promoted is not None else store.list(status=Status.promoted):
-        if existing.id == candidate.id:
-            continue
-        reason = contradicts(candidate.fact, existing.fact)
-        if reason is None:
-            continue
-        retired = existing.model_copy(
-            update={"status": Status.stale, "risk_tier": tiers.TIER_CURATED}
-        )
-        store.update(retired)
-        store.enqueue(retired, dest="memory.md", reason=f"superseded by {candidate.id}: {reason}")
-        flagged.append(existing.id)
+    with lock:
+        pool = promoted if promoted is not None else store.list(status=Status.promoted)
+        for existing in pool:
+            if existing.id == candidate.id:
+                continue
+            reason = contradicts(candidate.fact, existing.fact)
+            if reason is None:
+                continue
+            retired = existing.model_copy(
+                update={"status": Status.superseded, "risk_tier": tiers.TIER_CURATED}
+            )
+            if isinstance(store, MarkdownStore):
+                _, write_result = store.update_with_token(retired)
+                undo_token = write_result["undo_token"]
+            else:
+                store.update(retired)
+                undo_token = None
+            try:
+                store.enqueue(
+                    retired, dest="memory.md", reason=f"superseded by {candidate.id}: {reason}"
+                )
+            except Exception:
+                if undo_token is not None and root is not None:
+                    atomic.restore_from_bak(undo_token, root=root)
+                raise
+            flagged.append(existing.id)
     return tuple(flagged)

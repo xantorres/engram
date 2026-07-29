@@ -23,3 +23,91 @@ def test_precision_tokens_extracted():
     tokens = dedup.precision_tokens("VAT 12345678A on 2026-06-09")
     assert "12345678A" in tokens
     assert "2026-06-09" in tokens
+
+
+# ---------------------------------------------------------------------------
+# Compound identifiers
+#
+# Facts name the same thing with different punctuation ("code-graph" vs
+# "codegraph"), so a compound must also match its joined spelling. It must do
+# that WITHOUT surrendering its parts: collapsing "a-b-c" to one token leaves
+# only boilerplate to compare on, and every fact sharing a sentence template
+# then reads as a duplicate of every other. All the cases below are drawn from
+# the real store.
+# ---------------------------------------------------------------------------
+
+
+def test_hyphenation_variants_of_one_name_are_duplicates():
+    assert (
+        dedup.compare(
+            "The user's code-graph layer is codebase-memory",
+            "The user's codegraph layer is codebasememory",
+        )
+        == "duplicate"
+    )
+
+
+def test_the_same_repo_spelled_two_ways_is_a_duplicate():
+    assert (
+        dedup.compare(
+            "User works on the acme/acme-react-ui-library project",
+            "The user works on the Acme-Org/acme-react-ui-library repository.",
+        )
+        == "duplicate"
+    )
+
+
+def test_two_project_slugs_in_one_template_stay_distinct():
+    assert (
+        dedup.compare(
+            "User has a project named g2i-vm-isolation",
+            "User has a project named engram-memory-fabric",
+        )
+        == "distinct"
+    )
+
+
+def test_similar_but_different_package_managers_stay_distinct():
+    """npm and pnpm are different answers; merging them loses a real preference."""
+    assert (
+        dedup.compare(
+            "The user uses npm for package management.",
+            "The project uses `pnpm` for package management.",
+        )
+        == "distinct"
+    )
+
+
+def test_two_includes_of_different_files_stay_distinct():
+    assert (
+        dedup.compare(
+            "The user's CLAUDE.md includes minimal-change.md",
+            "The user's CLAUDE.md includes core-principles.md",
+        )
+        == "distinct"
+    )
+
+
+def test_two_different_libraries_stay_distinct():
+    assert (
+        dedup.compare(
+            "The user uses the react-country-flag library.",
+            "The user uses the libphonenumber-js library.",
+        )
+        == "distinct"
+    )
+
+
+def test_unrelated_versioned_facts_are_not_a_conflict():
+    assert (
+        dedup.compare(
+            "The project uses Ajv (8.20.0) for validation.",
+            "User's project uses react-router",
+        )
+        == "distinct"
+    )
+
+
+def test_a_compound_keeps_its_parts_as_tokens():
+    tokens = dedup.salient_tokens("the code-graph layer")
+    assert {"code", "graph", "codegraph"} <= tokens

@@ -6,10 +6,10 @@ mirroring the confirm gate the rest of engram enforces.
 A memory reaches review down one of two roads. The bridge routes a candidate to
 the queue, which wraps it in an envelope carrying the proposed destination and a
 reason. Or it simply sits in the registry as ``pending`` - the state every
-capture starts in - or as ``stale`` after a newer fact contradicted it. All
+capture starts in - or as ``superseded`` after a newer fact contradicted it. All
 three are awaiting the same human yes/no, so the verbs here accept all three;
-the queue envelope is preferred when present because it carries the extra
-context, but its absence is not a refusal.
+the queue envelope supplies the destination and reason when one exists, but its
+absence is not a refusal.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from engram.core.locking import store_lock
 from engram.core.schema import Memory, Status
 from engram.core.store import MarkdownStore, Store
 
-AWAITING_REVIEW = (Status.pending, Status.stale)
+AWAITING_REVIEW = (Status.pending, Status.stale, Status.superseded)
 
 
 def pending_reviews(store: Store) -> list[dict]:
@@ -30,10 +30,15 @@ def pending_reviews(store: Store) -> list[dict]:
 
 
 def _awaiting(store: Store, memory_id: str) -> tuple[Memory, str] | dict:
-    """Resolve a memory awaiting review to ``(memory, dest)``, or an error dict."""
-    item = store.queue_get(memory_id)
-    if item is not None:
-        return Memory.from_item(item["memory"]), item.get("dest") or "memory.md"
+    """Resolve a memory awaiting review to ``(memory, dest)``, or an error dict.
+
+    The fact itself always comes from the registry, never from the queue
+    envelope. The envelope holds a snapshot taken when the item was filed, and
+    the registry is the documented source of truth that the user is invited to
+    hand-edit; promoting the snapshot would silently revert their edit and would
+    let an envelope outlive a rejection and resurrect it. Only ``dest`` and the
+    reason are the envelope's to give.
+    """
     memory = store.get(memory_id)
     if memory is None:
         return {"ok": False, "error": f"no memory {memory_id}"}
@@ -42,9 +47,14 @@ def _awaiting(store: Store, memory_id: str) -> tuple[Memory, str] | dict:
     if memory.status not in AWAITING_REVIEW:
         return {
             "ok": False,
-            "error": f"memory {memory_id} was rejected; re-stage it before promoting",
+            "error": (
+                f"memory {memory_id} was rejected; "
+                f'capture it again with `engram remember "<fact>"` to promote it'
+            ),
         }
-    return memory, memory.dest or "memory.md"
+    item = store.queue_get(memory_id)
+    dest = (item.get("dest") if item else None) or memory.dest or "memory.md"
+    return memory, dest
 
 
 def approve(store: Store, memory_id: str, *, confirm: bool, today: dt.date | None = None) -> dict:
@@ -99,13 +109,48 @@ def approve(store: Store, memory_id: str, *, confirm: bool, today: dt.date | Non
 
 
 def reject(store: Store, memory_id: str, *, reason: str = "") -> dict:
-    memory = store.get(memory_id)
-    if memory is None and store.queue_get(memory_id) is None:
-        return {"ok": False, "error": f"no memory {memory_id}"}
-    if memory is not None:
-        store.update(memory.model_copy(update={"status": Status.rejected}))
-    store.resolve_queue(memory_id)
-    return {"ok": True, "id": memory_id, "reason": reason}
+    """Retire a memory the user does not want, from any state.
+
+    Rejecting lands the same transition ``forget`` does, so it carries the same
+    guarantees: one lock over both writes, an undo token back, and the registry
+    write undone if the queue resolution fails - otherwise a rejection could
+    half-land and leave the fact promotable again from its surviving envelope.
+    """
+    root = getattr(store, "root", None)
+    lock = store_lock(root) if root is not None else contextlib.nullcontext()
+    with lock:
+        memory = store.get(memory_id)
+        if memory is None and store.queue_get(memory_id) is None:
+            return {"ok": False, "error": f"no memory {memory_id}"}
+
+        undo_token = ""
+        if memory is not None:
+            rejected = memory.model_copy(update={"status": Status.rejected})
+            if isinstance(store, MarkdownStore):
+                _, write_result = store.update_with_token(rejected)
+                undo_token = write_result["undo_token"]
+            else:
+                store.update(rejected)
+        try:
+            store.resolve_queue(memory_id)
+        except Exception:
+            if undo_token and root is not None:
+                atomic.restore_from_bak(undo_token, root=root)
+            raise
+
+        if root is not None:
+            atomic._append_audit(
+                root,
+                {
+                    "ts": dt.datetime.now(dt.UTC).isoformat(),
+                    "endpoint": "review/reject",
+                    "entity_id": memory_id,
+                    "path": str(store.registry) if hasattr(store, "registry") else "",
+                    "undo_token": undo_token,
+                    "created": False,
+                },
+            )
+        return {"ok": True, "id": memory_id, "reason": reason, "undo_token": undo_token}
 
 
 def forget(store: Store, memory_id: str) -> dict:

@@ -31,7 +31,12 @@ class Status(StrEnum):
     pending = "pending"
     promoted = "promoted"
     rejected = "rejected"
+    # Went unconfirmed past its decay horizon. Time did this; re-verifying is routine.
     stale = "stale"
+    # Actively contradicted by a newer fact, and out of recall until a human rules.
+    # Distinct from `stale` on purpose: a sweep that retires the merely forgotten
+    # must not also retire the disputed.
+    superseded = "superseded"
 
 
 class LearnedBy(StrEnum):

@@ -20,12 +20,17 @@ _PRECISION_PATTERNS = [
 
 _STOPWORDS = frozenset(
     "the a an of to in on for and or is are was were be been being with at by"
-    " my i you he she it we they this that user users".split()
+    " my i you he she it we they this that".split()
 )
 
-# Facts arrive hyphenated inconsistently ("code-graph" / "codegraph"), so
-# separators are dissolved before tokenising and the two spellings collapse.
+# Facts name the same thing with different punctuation ("code-graph" vs
+# "codegraph"), so each compound also yields its joined spelling. The parts are
+# kept: a compound carries most of a fact's discriminating weight, and replacing
+# "a-b-c" with one token leaves only sentence boilerplate to compare on, at
+# which point every fact sharing a template looks like a duplicate of every
+# other. Emitting both forms buys the match without paying that.
 _SEPARATORS = re.compile(r"[-_]")
+_COMPOUND = re.compile(r"[a-z0-9]+(?:[-_][a-z0-9]+)+")
 
 _DUP_THRESHOLD = 0.5
 _CONFLICT_OVERLAP = 0.34
@@ -38,9 +43,19 @@ def precision_tokens(text: str) -> set[str]:
     return out
 
 
+def _keep(word: str) -> bool:
+    return len(word) >= 3 and word not in _STOPWORDS
+
+
 def salient_tokens(text: str) -> set[str]:
-    words = re.findall(r"[A-Za-z0-9]+", _SEPARATORS.sub("", text.lower()))
-    return {w for w in words if len(w) >= 3 and w not in _STOPWORDS}
+    lowered = text.lower()
+    out = {w for w in re.findall(r"[a-z0-9]+", lowered) if _keep(w)}
+    out.update(
+        joined
+        for compound in _COMPOUND.findall(lowered)
+        if _keep(joined := _SEPARATORS.sub("", compound))
+    )
+    return out
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:

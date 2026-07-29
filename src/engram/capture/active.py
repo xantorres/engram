@@ -11,9 +11,11 @@ it contradicts. Both are handled here so every caller inherits them.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 
 from engram.core import screen, supersede, tiers
+from engram.core.locking import store_lock
 from engram.core.schema import Kind, LearnedBy, Memory, Status
 from engram.core.store import Store
 from engram.core.text import clean_fact
@@ -54,36 +56,45 @@ def stage(
     screen, but such a fact is staged at tier 3 so it can never auto-promote:
     the user may decide engram is the right home for it, and still has to say so
     a second time at review.
+
+    Screening, staging and retiring run under one lock. They are a single
+    read-modify-write over the registry, and interleaving them with another
+    writer would let a fact be judged against a store that no longer exists by
+    the time it is written - or let a retirement overwrite a ``forget`` that
+    landed in between.
     """
     cleaned = clean_fact(fact)
-    known = store.list()
-    verdict = screen.assess(cleaned, existing=known, check_trivial=False)
-    if not verdict.admitted and not force:
-        return CaptureResult(
-            admitted=False,
-            reason=verdict.reason,
-            category=verdict.category,
-            duplicate_of=verdict.duplicate_of,
-        )
+    root = getattr(store, "root", None)
+    lock = store_lock(root) if root is not None else contextlib.nullcontext()
+    with lock:
+        known = store.list()
+        verdict = screen.assess(cleaned, existing=known, check_trivial=False)
+        if not verdict.admitted and not force:
+            return CaptureResult(
+                admitted=False,
+                reason=verdict.reason,
+                category=verdict.category,
+                duplicate_of=verdict.duplicate_of,
+            )
 
-    risk_tier = tiers.TIER_CURATED if verdict.category == "sensitive" else tiers.classify(kind)
-    memory = store.add(
-        Memory(
-            fact=cleaned,
-            kind=kind,
-            confidence=confidence,
-            learned_by=LearnedBy.remember,
-            source=source,
-            risk_tier=risk_tier,
+        risk_tier = tiers.TIER_CURATED if verdict.category == "sensitive" else tiers.classify(kind)
+        memory = store.add(
+            Memory(
+                fact=cleaned,
+                kind=kind,
+                confidence=confidence,
+                learned_by=LearnedBy.remember,
+                source=source,
+                risk_tier=risk_tier,
+            )
         )
-    )
-    # The snapshot predates this capture and nothing else has retired anything
-    # since, so it is safe to reuse instead of re-parsing the registry.
-    promoted = [m for m in known if m.status == Status.promoted]
-    return CaptureResult(
-        memory=memory,
-        superseded=supersede.flag_contradicted(store, memory, promoted=promoted),
-    )
+        # Safe to reuse rather than re-parse: the lock is held, so nothing has
+        # written since the snapshot was taken.
+        promoted = [m for m in known if m.status == Status.promoted]
+        return CaptureResult(
+            memory=memory,
+            superseded=supersede.flag_contradicted(store, memory, promoted=promoted),
+        )
 
 
 def remember(
