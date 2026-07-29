@@ -20,8 +20,10 @@ flowchart LR
     T["Past session transcripts"] -- "harvest (local model)" --> C
     C{"engram<br/>capture + review"}
     C -- "low-risk kinds" --> M["memory.md<br/>★ source of truth"]
-    C -- "sensitive kinds" --> Q["review queue"]
-    Q -- "you approve" --> M
+    C -- "sensitive kinds · conflicts" --> Q["review queue"]
+    Q -- "promote --confirm" --> M
+    C -- "promote --confirm" --> M
+    M -- "contradicted by a newer fact" --> Q
     M -- "MCP resource · AGENTS.md / CLAUDE.md block" --> R["Recalled in every agent"]
 ```
 
@@ -31,19 +33,23 @@ flowchart LR
 
 **A fact's journey.** Your agent calls `remember("prefers pnpm over npm", tooling)`. Every capture starts as `pending` — staged, not yet true. From there it reaches recall two ways: `engram promote <id> --confirm` approves it on the spot, or `engram sync --apply` walks the backlog and auto-appends the low-risk kinds while routing the sensitive ones to the review queue. `tooling` is low-risk, so `sync` would log it for you; `remember("VAT number is 12345678X", fiscal)` is not, so it waits for an explicit `promote`. Both end up as plain Markdown you can read, `git diff`, and `engram forget`.
 
-**Facts go stale, so Engram retires them.** When a new fact contradicts one already in recall — it claims the same exclusive role ("your *primary* editor"), or reports that something is gone — the older fact is marked `stale`, dropped from recall immediately, and filed for review with the reason. It is never deleted, and the newcomer is not promoted in its place; you decide with `promote` or `reject`. Confidence also decays toward the fact's `decay` horizon, so a freshly confirmed fact outranks an older one that merely sounded more certain.
+**Facts expire, so Engram retires them.** When a new fact contradicts one already in recall — it claims the same exclusive role ("your *primary* editor"), or reports that something is gone — the older fact is marked `superseded`, dropped from recall immediately, and filed for review with the reason. It is never deleted, and the newcomer is not promoted in its place; you decide with `promote` or `reject`. Confidence also decays toward the fact's `decay` horizon, so a freshly confirmed fact outranks an older one that merely sounded more certain.
 
 ### The lifecycle
 
 | Status | Meaning | How it moves |
 |---|---|---|
 | `pending` | captured, not yet true | `promote --confirm` → `promoted` · `sync --apply` → promoted/queued/rejected · `reject` → `rejected` |
-| *(queued)* | routed by `sync` for your review; envelope in `queue/` | `promote --confirm` → `promoted` · `reject` → `rejected` |
-| `promoted` | live in recall | `forget` → `rejected` · contradicted → `stale` |
-| `stale` | was live, now contradicted; out of recall | `promote --confirm` re-verifies it · `reject` retires it |
-| `rejected` | not in recall; re-learnable on a later harvest | — |
+| `promoted` | live in recall | `forget` or `reject` → `rejected` · contradicted → `superseded` |
+| `superseded` | was live, then contradicted by newer evidence | `promote --confirm` re-verifies it · `reject` retires it |
+| `stale` | went unconfirmed past its `decay` horizon | `promote --confirm` re-verifies it · `reject` retires it |
+| `rejected` | not in recall; the same wording can be captured again, as a new id | — |
 
-`promote`, `reject` and `show` all accept an id in any state that's awaiting your call — `pending`, queued, or `stale`.
+`stale` and `superseded` are deliberately different: the first means time passed, the second means something newer disagreed. A sweep for the merely unconfirmed must not also retire the disputed.
+
+Orthogonal to status, a fact may also have an **envelope** in `queue/` — a review slip carrying the proposed destination and the reason it needs a human. `sync` files one when it escalates a candidate, and so does a contradiction. The envelope is context, never the source of truth: `promote` always reads the fact itself from `memory.md`, so editing the frontmatter of a queued fact does what you'd expect.
+
+`promote`, `reject` and `show` all accept an id in any state awaiting your call — `pending`, `stale`, or `superseded`, queued or not. `show` and `reject` will also act on an already-decided fact; `promote` refuses one.
 
 ## Where your memory lives
 
@@ -55,7 +61,7 @@ Everything is plain files in one folder — your store directory (default `~/.lo
 | `memory.md` *(body)* | readable `## kind` bullet list | generated from the registry |
 | `AGENTS.md` / `CLAUDE.md` block, MCP recall | what agents actually read | rendered on demand |
 | `memory-log.md` | append-only log of low-risk auto-captures | secondary record |
-| `queue/*.json` | facts awaiting your review | staging, not yet truth |
+| `queue/*.json` | review slips: why a fact needs you, and where it would land | context, not truth — `engram list` shows everything awaiting you |
 | `audit.jsonl`, `.bak/` | append-only audit trail + one-step undo | history |
 
 To change a fact, edit the frontmatter or use the CLI (`remember` / `promote` / `forget`) — don't hand-edit the generated body, it's overwritten on the next write. Because it's just files in a folder, your whole memory rides whatever already backs that folder up (Git, Dropbox, a NAS).
