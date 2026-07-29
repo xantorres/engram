@@ -27,3 +27,20 @@ def is_stale(memory: Memory, *, today: dt.date | None = None) -> bool:
     today = today or dt.date.today()
     base = memory.last_verified or memory.learned_at
     return (today - base) > parse_decay(memory.decay)
+
+
+def effective_confidence(memory: Memory, *, today: dt.date | None = None) -> float:
+    """Confidence discounted by how far the memory has travelled toward staleness.
+
+    A fact confirmed today is worth its stated confidence; one sitting at its
+    decay horizon is worth nothing. Recall ranks on this rather than the raw
+    number, so a freshly verified fact beats an older, nominally more confident
+    one instead of losing to it until the day it expires outright.
+    """
+    today = today or dt.date.today()
+    base = memory.last_verified or memory.learned_at
+    horizon = parse_decay(memory.decay).total_seconds()
+    if horizon <= 0:
+        return 0.0
+    ratio = min(max((today - base).total_seconds() / horizon, 0.0), 1.0)
+    return memory.confidence * (1.0 - ratio)

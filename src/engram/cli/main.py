@@ -46,9 +46,10 @@ def remember(
     fact: str,
     kind: str = typer.Option("preference", "--kind", "-k"),
     confidence: float = typer.Option(0.6, "--confidence", "-c"),
+    force: bool = typer.Option(False, "--force", help="Stage despite a capture screen."),
 ) -> None:
     """Stage a fact into memory (pending review)."""
-    from engram.capture.active import remember as stage
+    from engram.capture.active import stage
 
     try:
         parsed_kind = Kind(kind)
@@ -57,8 +58,19 @@ def remember(
         typer.echo(f"unknown kind {kind!r}; valid kinds: {valid}", err=True)
         raise typer.Exit(2) from None
 
-    mem = stage(_store(), fact, kind=parsed_kind, confidence=confidence)
+    result = stage(_store(), fact, kind=parsed_kind, confidence=confidence, force=force)
+    if not result.admitted:
+        typer.echo(f"not staged: {result.reason}")
+        typer.echo("pass --force to stage it anyway")
+        raise typer.Exit(1)
+
+    mem = result.memory
     typer.echo(f"staged {mem.id}: [{mem.kind.value}] {mem.fact}")
+    if result.superseded:
+        typer.echo(
+            f"retired from recall pending review: {', '.join(result.superseded)}  "
+            f"(engram show <id> to resolve)"
+        )
 
 
 @app.command(name="list")
@@ -89,8 +101,14 @@ def harvest(
     )
     typer.echo(
         f"staged {result['staged']} candidate(s) from {path} "
-        f"(skipped dupe={result['skipped_dupe']} trivial={result['skipped_trivial']})"
+        f"(skipped dupe={result['skipped_dupe']} trivial={result['skipped_trivial']} "
+        f"sensitive={result['skipped_sensitive']})"
     )
+    if result["superseded"]:
+        typer.echo(
+            f"retired from recall pending review: {', '.join(result['superseded'])}  "
+            f"(engram show <id> to resolve)"
+        )
 
 
 @app.command()
@@ -157,13 +175,42 @@ def serve() -> None:
 
 
 @app.command()
-def sync(do_apply: bool = typer.Option(False, "--apply")) -> None:
-    """Run the promotion bridge over pending candidates (dry-run unless --apply)."""
+def sync(
+    do_apply: bool = typer.Option(False, "--apply"),
+    ids: list[str] | None = typer.Option(
+        None, "--id", help="Only this memory id; repeat to add more."
+    ),
+    kinds: list[str] | None = typer.Option(
+        None, "--kind", "-k", help="Only this kind; repeatable."
+    ),
+    limit: int | None = typer.Option(
+        None, "--limit", "-n", help="Process at most this many candidates."
+    ),
+) -> None:
+    """Run the promotion bridge over pending candidates (dry-run unless --apply).
+
+    Without a filter this walks the entire pending backlog. --id, --kind and
+    --limit narrow the batch so a backlog can be reviewed in bites.
+    """
     from engram.bridge import promote as bridge
+
+    for kind in kinds or ():
+        try:
+            Kind(kind)
+        except ValueError:
+            valid = ", ".join(k.value for k in Kind)
+            typer.echo(f"unknown kind {kind!r}; valid kinds: {valid}", err=True)
+            raise typer.Exit(2) from None
 
     config = load_config()
     store = MarkdownStore(config.store_dir)
-    result = bridge.plan(store, kind_allowlist=config.kind_allowlist)
+    result = bridge.plan(
+        store,
+        kind_allowlist=config.kind_allowlist,
+        ids=ids or None,
+        kinds=kinds or None,
+        limit=limit,
+    )
     if do_apply and config.autopromote:
         bridge.apply(store, result, autopromote=True)
         mode = "applied"
@@ -194,20 +241,32 @@ def queue() -> None:
 
 @app.command()
 def show(memory_id: str) -> None:
-    """Show a queued memory and its proposed change."""
-    item = _store().queue_get(memory_id)
-    if item is None:
-        typer.echo(f"no queued memory {memory_id}")
+    """Show a memory awaiting review and its proposed change."""
+    store = _store()
+    item = store.queue_get(memory_id)
+    if item is not None:
+        mem = item["memory"]
+        typer.echo(
+            f"{mem['id']} [{mem['status']}/{mem['kind']}] conf={mem['confidence']}\n{mem['fact']}"
+        )
+        if item.get("reason"):
+            typer.echo(f"\nreason: {item['reason']}")
+        if item.get("diff"):
+            typer.echo("\n" + item["diff"])
+        return
+    memory = store.get(memory_id)
+    if memory is None:
+        typer.echo(f"no memory {memory_id}")
         raise typer.Exit(1)
-    mem = item["memory"]
-    typer.echo(f"{mem['id']} [{mem['kind']}] conf={mem['confidence']}\n{mem['fact']}")
-    if item.get("diff"):
-        typer.echo("\n" + item["diff"])
+    typer.echo(
+        f"{memory.id} [{memory.status.value}/{memory.kind.value}] "
+        f"conf={memory.confidence}\n{memory.fact}"
+    )
 
 
 @app.command()
 def promote(memory_id: str, confirm: bool = typer.Option(False, "--confirm")) -> None:
-    """Approve a queued memory (requires --confirm)."""
+    """Approve a memory awaiting review (requires --confirm)."""
     from engram.bridge import review
 
     result = review.approve(_store(), memory_id, confirm=confirm)

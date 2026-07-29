@@ -25,11 +25,25 @@ flowchart LR
     M -- "MCP resource · AGENTS.md / CLAUDE.md block" --> R["Recalled in every agent"]
 ```
 
-- **Capture** — agents call a `remember` tool mid-task, or Engram harvests durable facts from session transcripts using a local model.
-- **Review** — low-risk kinds (you choose which) are logged automatically; sensitive kinds wait in a queue you approve. Any promoted fact can be retracted with `engram forget`. Nothing rewrites your curated memory without consent.
+- **Capture** — agents call a `remember` tool mid-task, or Engram harvests durable facts from session transcripts using a local model. Facts that only restate what's already stored, that anyone could read off a file path, or that name where your credentials live are refused before they're written.
+- **Review** — low-risk kinds (you choose which) are logged automatically; sensitive kinds wait for your approval. Any promoted fact can be retracted with `engram forget`. Nothing rewrites your curated memory without consent.
 - **Recall** — every agent loads your memories through an MCP resource or a generated `AGENTS.md` / `CLAUDE.md` context block.
 
-**A fact's journey.** Your agent calls `remember("prefers pnpm over npm", tooling)` — `tooling` is a low-risk kind, so it lands in `memory.md` and shows up in recall right away. Later it captures `remember("VAT number is 12345678X", fiscal)` — `fiscal` is sensitive, so Engram **won't** auto-write it; it waits in the review queue until you run `engram promote <id> --confirm`. Both end up as plain Markdown you can read, `git diff`, and `engram forget`.
+**A fact's journey.** Your agent calls `remember("prefers pnpm over npm", tooling)`. Every capture starts as `pending` — staged, not yet true. From there it reaches recall two ways: `engram promote <id> --confirm` approves it on the spot, or `engram sync --apply` walks the backlog and auto-appends the low-risk kinds while routing the sensitive ones to the review queue. `tooling` is low-risk, so `sync` would log it for you; `remember("VAT number is 12345678X", fiscal)` is not, so it waits for an explicit `promote`. Both end up as plain Markdown you can read, `git diff`, and `engram forget`.
+
+**Facts go stale, so Engram retires them.** When a new fact contradicts one already in recall — it claims the same exclusive role ("your *primary* editor"), or reports that something is gone — the older fact is marked `stale`, dropped from recall immediately, and filed for review with the reason. It is never deleted, and the newcomer is not promoted in its place; you decide with `promote` or `reject`. Confidence also decays toward the fact's `decay` horizon, so a freshly confirmed fact outranks an older one that merely sounded more certain.
+
+### The lifecycle
+
+| Status | Meaning | How it moves |
+|---|---|---|
+| `pending` | captured, not yet true | `promote --confirm` → `promoted` · `sync --apply` → promoted/queued/rejected · `reject` → `rejected` |
+| *(queued)* | routed by `sync` for your review; envelope in `queue/` | `promote --confirm` → `promoted` · `reject` → `rejected` |
+| `promoted` | live in recall | `forget` → `rejected` · contradicted → `stale` |
+| `stale` | was live, now contradicted; out of recall | `promote --confirm` re-verifies it · `reject` retires it |
+| `rejected` | not in recall; re-learnable on a later harvest | — |
+
+`promote`, `reject` and `show` all accept an id in any state that's awaiting your call — `pending`, queued, or `stale`.
 
 ## Where your memory lives
 
@@ -94,9 +108,18 @@ uv tool install git+https://github.com/xantorres/engram
 
 engram remember "I prefer pnpm over npm"    # stage a fact (pending review)
 engram list --status pending                # see what's staged
-ENGRAM_AUTOPROMOTE=true engram sync --apply  # promote the low-risk ones
+engram promote mem-0001 --confirm           # approve one fact outright
 engram recall                               # recall promoted memories
 engram serve                                # start the MCP server for your agents
+```
+
+Working through a backlog with `sync`? Narrow it instead of processing everything at once:
+
+```bash
+engram sync                                  # dry run over the whole backlog
+engram sync --id mem-0042 --id mem-0043      # just these two
+engram sync --kind tooling --limit 25        # one kind, 25 at a time
+ENGRAM_AUTOPROMOTE=true engram sync --kind tooling --limit 25 --apply
 ```
 
 Wire it into an agent (Codex shown):

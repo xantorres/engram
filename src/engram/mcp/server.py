@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
-from engram.capture.active import remember as _remember
+from engram.capture.active import CaptureRefused
 from engram.config import load as load_config
 from engram.core.schema import Kind
 from engram.core.store import MarkdownStore
@@ -35,8 +35,22 @@ def _kind(value: str) -> Kind:
 @mcp.tool
 def remember(fact: str, kind: str = "preference", confidence: float = 0.6) -> str:
     """Stage a durable fact about the user into memory (pending review)."""
-    memory = _remember(_store(), fact, kind=_kind(kind), confidence=confidence)
-    return f"staged {memory.id}: [{memory.kind.value}] {memory.fact}"
+    from engram.capture.active import stage
+
+    try:
+        result = stage(_store(), fact, kind=_kind(kind), confidence=confidence)
+    except CaptureRefused as e:  # pragma: no cover - stage() reports, never raises
+        raise ToolError(str(e)) from e
+    if not result.admitted:
+        raise ToolError(f"not staged: {result.reason}")
+
+    memory = result.memory
+    message = f"staged {memory.id}: [{memory.kind.value}] {memory.fact}"
+    if result.superseded:
+        # The agent that just learned the new fact is the one best placed to tell
+        # the user an older one was retired, so say it in the tool result.
+        message += f"\nretired from recall pending review: {', '.join(result.superseded)}"
+    return message
 
 
 @mcp.tool

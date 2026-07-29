@@ -42,17 +42,49 @@ class PromotionResult:
         return [r for r in self.routes if r.action == "skip"]
 
 
-def plan(store: Store, *, kind_allowlist: list[str] | None = None) -> PromotionResult:
+def _select(
+    candidates: list[Memory],
+    *,
+    ids: list[str] | None,
+    kinds: list[str] | None,
+    limit: int | None,
+) -> list[Memory]:
+    if ids is not None:
+        wanted = set(ids)
+        candidates = [c for c in candidates if c.id in wanted]
+    if kinds is not None:
+        wanted_kinds = set(kinds)
+        candidates = [c for c in candidates if c.kind.value in wanted_kinds]
+    if limit is not None:
+        candidates = candidates[: max(limit, 0)]
+    return candidates
+
+
+def plan(
+    store: Store,
+    *,
+    kind_allowlist: list[str] | None = None,
+    ids: list[str] | None = None,
+    kinds: list[str] | None = None,
+    limit: int | None = None,
+) -> PromotionResult:
     """Route pending candidates to append, queue, or skip.
 
     kind_allowlist: when provided, a candidate whose non-curated kind is in the
     list is appended directly (bypassing tier classification) unless a conflict
     exists. Curated kinds always fall through to classification and queue for
     review, regardless of the allowlist. None falls back to standard tier logic.
+
+    ids / kinds / limit narrow which pending candidates are considered, so a
+    large backlog can be worked through a few facts at a time instead of in one
+    irreversible pass. They narrow the candidates only - every candidate is
+    still compared against the whole promoted set, so a filtered run can never
+    miss a duplicate or a conflict that an unfiltered run would have caught.
     """
     promoted = store.list(status=Status.promoted)
     result = PromotionResult()
-    for candidate in store.list(status=Status.pending):
+    selected = _select(store.list(status=Status.pending), ids=ids, kinds=kinds, limit=limit)
+    for candidate in selected:
         verdict, against = _dedup_against(candidate, promoted)
         if verdict == "duplicate":
             result.routes.append(Route(candidate, "skip", f"already known ({against})"))
@@ -144,9 +176,15 @@ def run(
     autopromote: bool,
     today: dt.date | None = None,
     kind_allowlist: list[str] | None = None,
+    ids: list[str] | None = None,
+    kinds: list[str] | None = None,
+    limit: int | None = None,
 ) -> PromotionResult:
     return apply(
-        store, plan(store, kind_allowlist=kind_allowlist), autopromote=autopromote, today=today
+        store,
+        plan(store, kind_allowlist=kind_allowlist, ids=ids, kinds=kinds, limit=limit),
+        autopromote=autopromote,
+        today=today,
     )
 
 

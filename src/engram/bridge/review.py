@@ -1,7 +1,15 @@
-"""Review queue operations: list, approve (promote), reject.
+"""Review operations: list, approve (promote), reject.
 
-Approving a queued memory is a tier-3 write and is refused without explicit
-confirmation, mirroring the confirm gate the rest of engram enforces.
+Approving is a tier-3 write and is refused without explicit confirmation,
+mirroring the confirm gate the rest of engram enforces.
+
+A memory reaches review down one of two roads. The bridge routes a candidate to
+the queue, which wraps it in an envelope carrying the proposed destination and a
+reason. Or it simply sits in the registry as ``pending`` - the state every
+capture starts in - or as ``stale`` after a newer fact contradicted it. All
+three are awaiting the same human yes/no, so the verbs here accept all three;
+the queue envelope is preferred when present because it carries the extra
+context, but its absence is not a refusal.
 """
 
 from __future__ import annotations
@@ -14,9 +22,29 @@ from engram.core.locking import store_lock
 from engram.core.schema import Memory, Status
 from engram.core.store import MarkdownStore, Store
 
+AWAITING_REVIEW = (Status.pending, Status.stale)
+
 
 def pending_reviews(store: Store) -> list[dict]:
     return store.queue_list()
+
+
+def _awaiting(store: Store, memory_id: str) -> tuple[Memory, str] | dict:
+    """Resolve a memory awaiting review to ``(memory, dest)``, or an error dict."""
+    item = store.queue_get(memory_id)
+    if item is not None:
+        return Memory.from_item(item["memory"]), item.get("dest") or "memory.md"
+    memory = store.get(memory_id)
+    if memory is None:
+        return {"ok": False, "error": f"no memory {memory_id}"}
+    if memory.status == Status.promoted:
+        return {"ok": False, "error": f"memory {memory_id} is already promoted"}
+    if memory.status not in AWAITING_REVIEW:
+        return {
+            "ok": False,
+            "error": f"memory {memory_id} was rejected; re-stage it before promoting",
+        }
+    return memory, memory.dest or "memory.md"
 
 
 def approve(store: Store, memory_id: str, *, confirm: bool, today: dt.date | None = None) -> dict:
@@ -25,16 +53,13 @@ def approve(store: Store, memory_id: str, *, confirm: bool, today: dt.date | Non
     root = getattr(store, "root", None)
     lock = store_lock(root) if root is not None else contextlib.nullcontext()
     with lock:
-        item = store.queue_get(memory_id)
-        if item is None:
-            return {"ok": False, "error": f"no queued memory {memory_id}"}
+        resolved = _awaiting(store, memory_id)
+        if isinstance(resolved, dict):
+            return resolved
+        candidate, dest = resolved
         today = today or dt.date.today()
-        memory = Memory.from_item(item["memory"]).model_copy(
-            update={
-                "status": Status.promoted,
-                "last_verified": today,
-                "dest": item.get("dest") or "memory.md",
-            }
+        memory = candidate.model_copy(
+            update={"status": Status.promoted, "last_verified": today, "dest": dest}
         )
         try:
             if isinstance(store, MarkdownStore):
@@ -74,10 +99,9 @@ def approve(store: Store, memory_id: str, *, confirm: bool, today: dt.date | Non
 
 
 def reject(store: Store, memory_id: str, *, reason: str = "") -> dict:
-    item = store.queue_get(memory_id)
-    if item is None:
-        return {"ok": False, "error": f"no queued memory {memory_id}"}
     memory = store.get(memory_id)
+    if memory is None and store.queue_get(memory_id) is None:
+        return {"ok": False, "error": f"no memory {memory_id}"}
     if memory is not None:
         store.update(memory.model_copy(update={"status": Status.rejected}))
     store.resolve_queue(memory_id)

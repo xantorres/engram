@@ -9,7 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 
-from engram.core.freshness import is_stale
+from engram.core.freshness import effective_confidence, is_stale
 from engram.core.schema import Memory, Status
 
 
@@ -25,15 +25,20 @@ def rank(
     limit: int = 20,
     today: dt.date | None = None,
 ) -> list[Memory]:
+    today = today or dt.date.today()
     pool = recallable(memories, today=today)
+
+    def weight(memory: Memory) -> float:
+        return effective_confidence(memory, today=today)
+
     if query:
         wanted = _tokens(query)
-        scored = [(len(wanted & _tokens(m.fact)), m.confidence, m) for m in pool]
+        scored = [(len(wanted & _tokens(m.fact)), weight(m), m) for m in pool]
         scored = [s for s in scored if s[0] > 0]
         scored.sort(key=lambda s: (s[0], s[1]), reverse=True)
         ranked = [m for _, _, m in scored]
     else:
-        ranked = sorted(pool, key=lambda m: m.confidence, reverse=True)
+        ranked = sorted(pool, key=weight, reverse=True)
     return ranked[:limit]
 
 

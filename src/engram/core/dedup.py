@@ -20,8 +20,12 @@ _PRECISION_PATTERNS = [
 
 _STOPWORDS = frozenset(
     "the a an of to in on for and or is are was were be been being with at by"
-    " my i you he she it we they this that".split()
+    " my i you he she it we they this that user users".split()
 )
+
+# Facts arrive hyphenated inconsistently ("code-graph" / "codegraph"), so
+# separators are dissolved before tokenising and the two spellings collapse.
+_SEPARATORS = re.compile(r"[-_]")
 
 _DUP_THRESHOLD = 0.5
 _CONFLICT_OVERLAP = 0.34
@@ -35,7 +39,7 @@ def precision_tokens(text: str) -> set[str]:
 
 
 def salient_tokens(text: str) -> set[str]:
-    words = re.findall(r"[A-Za-z0-9]+", text.lower())
+    words = re.findall(r"[A-Za-z0-9]+", _SEPARATORS.sub("", text.lower()))
     return {w for w in words if len(w) >= 3 and w not in _STOPWORDS}
 
 

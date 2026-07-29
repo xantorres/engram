@@ -12,6 +12,7 @@ from pathlib import Path
 
 import yaml
 
+from engram.core import screen, supersede
 from engram.core.schema import Kind, LearnedBy, Memory
 from engram.core.store import Store
 from engram.core.text import clean_fact
@@ -59,25 +60,27 @@ def import_markdown_dir(
     store: Store, directory: str | Path, *, confidence: float = 0.7
 ) -> list[Memory]:
     staged: list[Memory] = []
+    existing = store.list()
     for path in sorted(Path(directory).glob("*.md")):
         if path.name.lower() in _SKIP:
             continue
         front, body = _split(path.read_text(encoding="utf-8"))
         fact = clean_fact(front.get("description") or _first_line(body))
-        if not fact:
+        if not fact or not screen.assess(fact, existing=existing).admitted:
             continue
         hint = front.get("kind") or front.get("type")
-        staged.append(
-            store.add(
-                Memory(
-                    fact=fact,
-                    kind=infer_kind(fact, hint),
-                    confidence=confidence,
-                    learned_by=LearnedBy.imported,
-                    source=f"import:{path.name}",
-                )
+        memory = store.add(
+            Memory(
+                fact=fact,
+                kind=infer_kind(fact, hint),
+                confidence=confidence,
+                learned_by=LearnedBy.imported,
+                source=f"import:{path.name}",
             )
         )
+        staged.append(memory)
+        existing.append(memory)
+        supersede.flag_contradicted(store, memory)
     return staged
 
 

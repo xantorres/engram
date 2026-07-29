@@ -21,6 +21,7 @@ def doctor(memories: list[Memory], *, today: dt.date | None = None) -> dict:
     promoted = [m for m in memories if m.status == Status.promoted]
     report: dict[str, list] = {
         "stale": [],
+        "superseded": [m.id for m in memories if m.status == Status.stale],
         "low_confidence": [],
         "unverified": [],
         "conflicts": [],
