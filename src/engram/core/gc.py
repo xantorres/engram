@@ -98,20 +98,33 @@ class GarbageCollector:
         if apply and over:
             atomic._rotate_audit(self.store.root, self.config.audit_max_bytes)
         cutoff = dt.datetime.now(dt.UTC).timestamp() - self.config.audit_archive_keep_days * 86400
+        expired = self._expired_archives(cutoff)
+        pruned = 0
         if apply:
-            pruned = 0
-            for archive in self.store.root.glob("audit.jsonl.*"):
+            for archive in expired:
                 try:
-                    if archive.stat().st_mtime < cutoff:
-                        archive.unlink()
-                        pruned += 1
+                    archive.unlink()
+                    pruned += 1
                 except OSError:
                     pass
         else:
-            pruned = sum(
-                1 for p in self.store.root.glob("audit.jsonl.*") if p.stat().st_mtime < cutoff
-            )
+            pruned = len(expired)
         return {"rotated": over, "archives_pruned": pruned}
+
+    def _expired_archives(self, cutoff: float) -> list[Path]:
+        """Rotated archives past ``cutoff``; both branches count the same set.
+
+        An archive that cannot be stat'd - a dangling symlink, an offloaded file,
+        one unlinked between the glob and the stat - is skipped rather than fatal.
+        """
+        expired = []
+        for archive in self.store.root.glob("audit.jsonl.*"):
+            try:
+                if archive.stat().st_mtime < cutoff:
+                    expired.append(archive)
+            except OSError:
+                continue
+        return expired
 
 
 def _dir_size(path: Path) -> int:

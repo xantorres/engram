@@ -86,3 +86,15 @@ def test_gc_audit_same_pass_rotation_survives_prune(tmp_path):
     assert archives[0].read_text(encoding="utf-8") == original_content
     assert report["audit"]["rotated"] is True
     assert report["audit"]["archives_pruned"] == 0
+
+
+def test_gc_audit_dry_run_survives_an_unstattable_archive(tmp_path):
+    """The read-only path must be at least as forgiving as the one that deletes."""
+    store = MarkdownStore(tmp_path)
+    (store.root / "audit.jsonl").write_text('{"ts": "now"}\n', encoding="utf-8")
+    (store.root / "audit.jsonl.20250101T000000").symlink_to(store.root / "gone")
+
+    report = GarbageCollector(store, GcConfig(audit_archive_keep_days=14)).run(
+        GcOptions(audit=True), apply=False
+    )
+    assert report["audit"]["archives_pruned"] == 0
