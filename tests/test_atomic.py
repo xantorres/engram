@@ -144,3 +144,30 @@ def test_restore_refuses_path_outside_root(tmp_path):
     res = restore_from_bak(token, root=tmp_path)
     assert res["ok"] is False
     assert not outside.exists()
+
+
+def test_bak_snapshot_is_gzipped_and_smaller(tmp_path):
+    target = tmp_path / "f.md"
+    prior = "line one of many\n" * 5000
+    target.write_text(prior)
+
+    res = atomic_write(target, "new content", root=tmp_path)
+
+    bak = tmp_path / ".bak" / f"{res['undo_token']}.bak"
+    raw = bak.read_bytes()
+    assert raw[:2] == b"\x1f\x8b"
+    assert len(raw) < len(prior) // 2
+
+
+def test_legacy_plain_json_bak_still_restores(tmp_path):
+    secure_dir(_bak_dir(tmp_path))
+    target = tmp_path / "f.md"
+    token = "abcdef012345"
+    (_bak_dir(tmp_path) / f"{token}.bak").write_text(
+        json.dumps({"path": str(target), "content": "old text"}), encoding="utf-8"
+    )
+
+    res = restore_from_bak(token, root=tmp_path)
+
+    assert res["ok"] is True
+    assert target.read_text() == "old text"

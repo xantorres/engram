@@ -5,6 +5,7 @@ Written before any implementation changes — all should fail on the baseline.
 
 from __future__ import annotations
 
+import gzip
 import json
 
 from engram.core.schema import Kind, Memory, Status
@@ -460,7 +461,8 @@ class TestForgetUndoToken:
         # The bak file referenced by the token must contain memory.md path, not sentinel
         bak_dir = tmp_path / ".bak"
         token = result["undo_token"]
-        bak_record = json.loads((bak_dir / f"{token}.bak").read_text())
+        raw = (bak_dir / f"{token}.bak").read_bytes()
+        bak_record = json.loads(gzip.decompress(raw).decode("utf-8"))
         assert "memory.md" in bak_record["path"], (
             f"undo token must point to memory.md, got: {bak_record['path']}"
         )

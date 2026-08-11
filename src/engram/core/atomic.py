@@ -8,6 +8,7 @@ token reverts exactly that write (deleting the file if the write created it).
 from __future__ import annotations
 
 import datetime as dt
+import gzip
 import json
 import os
 import re
@@ -133,9 +134,8 @@ def atomic_write(
     token = uuid.uuid4().hex[:12]
     previous = path.read_text(encoding="utf-8") if path.exists() else None
     bak = _bak_dir(root) / f"{token}.bak"
-    bak.write_text(
-        json.dumps({"path": str(path), "content": previous}), encoding="utf-8"
-    )
+    payload = json.dumps({"path": str(path), "content": previous}).encode("utf-8")
+    bak.write_bytes(gzip.compress(payload))
     bak.chmod(FILE_MODE)
 
     fd, tmp = tempfile.mkstemp(dir=str(path.parent))
@@ -179,7 +179,12 @@ def restore_from_bak(token: str, *, root: str | Path) -> dict:
         bak = _bak_dir(root) / f"{token}.bak"
         if not bak.exists():
             return {"ok": False, "error": "unknown undo token"}
-        record = json.loads(bak.read_text(encoding="utf-8"))
+        raw = bak.read_bytes()
+        # Gzip magic bytes distinguish current snapshots from legacy plain-JSON
+        # ones written before compression; both must keep restoring.
+        is_gzip = raw[:2] == b"\x1f\x8b"
+        text = gzip.decompress(raw).decode("utf-8") if is_gzip else raw.decode("utf-8")
+        record = json.loads(text)
         target = Path(record["path"]).resolve()
         try:
             target.relative_to(root.resolve())
