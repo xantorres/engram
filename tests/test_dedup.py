@@ -1,3 +1,5 @@
+import pytest
+
 from engram.core import dedup
 
 
@@ -160,3 +162,27 @@ def test_a_frame_word_cannot_anchor_two_facts_together():
 
 def test_a_distinctive_shared_token_anchors():
     assert dedup.shared_anchor("the codegraph layer", "codegraph is installed") == "codegraph"
+
+
+@pytest.mark.xfail(
+    reason=(
+        "A generic phrase can absorb a tool's name. 'my primary code-graph tool' "
+        "joins to 'codegraph', which is also what the other fact calls its subject, "
+        "so the second fact's tokens look like a subset of the first and the pair "
+        "reads as a restatement. Joining compounds is what makes spelling variants "
+        "dedup and what lets a cross-spelling removal find its target, so it cannot "
+        "simply be dropped: the same token has to count as a match in one case and "
+        "not the other, which needs the subject named on the fact rather than "
+        "guessed from tokens. Fails safe today -- the newer fact is refused, not "
+        "silently merged."
+    ),
+    strict=True,
+)
+def test_a_joined_compound_cannot_vouch_for_a_shared_subject():
+    assert (
+        dedup.compare(
+            "codebase-memory is my primary code-graph tool",
+            "codegraph is my primary code-graph tool",
+        )
+        == "conflict"
+    )
