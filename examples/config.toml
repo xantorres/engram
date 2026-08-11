@@ -22,3 +22,23 @@ autopromote = false
 # tier classification. Conflicts still go to the review queue regardless.
 # Override via ENGRAM_BRIDGE_KIND_ALLOWLIST=preference,tooling (comma-separated).
 # kind_allowlist = ["preference", "tooling", "project", "infra"]
+
+[gc]
+# How long .bak undo snapshots are kept before gc deletes them.
+bak_keep_days = 14
+
+# Rotate audit.jsonl aside once it passes this size, in bytes.
+audit_max_bytes = 5_000_000
+
+# How long resolved review-queue entries are kept before gc deletes them.
+queue_done_keep_days = 30
+
+# Reserved for a future archive-vs-delete toggle; not yet wired to a behavior.
+archive = true
+
+# Extra days a stale fact stays recoverable before gc archives it for good.
+stale_grace_days = 30
+
+# How long rotated audit.jsonl archives are kept before `gc --audit --apply`
+# deletes them. 0 keeps nothing. Override via ENGRAM_GC_AUDIT_ARCHIVE_KEEP_DAYS.
+audit_archive_keep_days = 90

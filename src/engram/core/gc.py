@@ -88,11 +88,30 @@ class GarbageCollector:
         return {"pruned": count}
 
     def _audit(self, apply: bool) -> dict:
+        """Rotate audit.jsonl past its size cap, then prune archives past their age cap.
+
+        Rotation alone never deletes anything - each cycle would leak forever
+        without this second step.
+        """
         audit = self.store.root / "audit.jsonl"
         over = audit.exists() and audit.stat().st_size > self.config.audit_max_bytes
         if apply and over:
             atomic._rotate_audit(self.store.root, self.config.audit_max_bytes)
-        return {"rotated": over}
+        cutoff = dt.datetime.now(dt.UTC).timestamp() - self.config.audit_archive_keep_days * 86400
+        if apply:
+            pruned = 0
+            for archive in self.store.root.glob("audit.jsonl.*"):
+                try:
+                    if archive.stat().st_mtime < cutoff:
+                        archive.unlink()
+                        pruned += 1
+                except OSError:
+                    pass
+        else:
+            pruned = sum(
+                1 for p in self.store.root.glob("audit.jsonl.*") if p.stat().st_mtime < cutoff
+            )
+        return {"rotated": over, "archives_pruned": pruned}
 
 
 def _dir_size(path: Path) -> int:

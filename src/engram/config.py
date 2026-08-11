@@ -108,6 +108,7 @@ class GcConfig:
     queue_done_keep_days: int = 30
     archive: bool = True
     stale_grace_days: int = 30
+    audit_archive_keep_days: int = 90
 
 
 @dataclass
@@ -141,6 +142,10 @@ def _load_gc(data: dict) -> GcConfig:
         stale_grace_days=_env_int(
             "ENGRAM_GC_STALE_GRACE_DAYS",
             _check_int(section.get("stale_grace_days", 30), "gc.stale_grace_days"),
+        ),
+        audit_archive_keep_days=_env_int(
+            "ENGRAM_GC_AUDIT_ARCHIVE_KEEP_DAYS",
+            _check_int(section.get("audit_archive_keep_days", 90), "gc.audit_archive_keep_days"),
         ),
     )
 

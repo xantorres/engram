@@ -101,6 +101,10 @@ def _rotate_audit(root: str | Path, max_bytes: int | None) -> Path | None:
         suffix += 1
         target = audit.with_name(f"audit.jsonl.{stamp}.{suffix}")
     audit.rename(target)
+    # Rename preserves mtime (= last append time), which can already be older
+    # than a retention cutoff; stamp "now" so the archive isn't eligible for
+    # pruning in the very sweep that just created it.
+    os.utime(target, None)
     return target
 
 

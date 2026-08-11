@@ -75,6 +75,7 @@ _GC_RECALL_VARS = (
     "ENGRAM_GC_QUEUE_DONE_KEEP_DAYS",
     "ENGRAM_GC_ARCHIVE",
     "ENGRAM_GC_STALE_GRACE_DAYS",
+    "ENGRAM_GC_AUDIT_ARCHIVE_KEEP_DAYS",
     "ENGRAM_RECALL_AUTO_REFRESH",
     "ENGRAM_RECALL_REFRESH_TARGETS",
     "ENGRAM_RECALL_LIMIT",
@@ -94,6 +95,7 @@ def test_gc_recall_defaults(tmp_path, monkeypatch):
     assert cfg.gc.queue_done_keep_days == 30
     assert cfg.gc.archive is True
     assert cfg.gc.stale_grace_days == 30
+    assert cfg.gc.audit_archive_keep_days == 90
     assert cfg.recall.auto_refresh is False
     assert cfg.recall.refresh_targets == []
     assert cfg.recall.limit == 30
@@ -102,6 +104,13 @@ def test_gc_recall_defaults(tmp_path, monkeypatch):
 def test_gc_bak_keep_days_non_int_raises(tmp_path, monkeypatch):
     _clear_gc_recall(monkeypatch)
     path = _write(tmp_path, '[gc]\nbak_keep_days = "x"\n')
+    with pytest.raises(ConfigError):
+        load(path)
+
+
+def test_gc_audit_archive_keep_days_non_int_raises(tmp_path, monkeypatch):
+    _clear_gc_recall(monkeypatch)
+    path = _write(tmp_path, '[gc]\naudit_archive_keep_days = "x"\n')
     with pytest.raises(ConfigError):
         load(path)
 
@@ -124,13 +133,15 @@ def test_gc_recall_toml_loads(tmp_path, monkeypatch):
     _clear_gc_recall(monkeypatch)
     path = _write(
         tmp_path,
-        "[gc]\nbak_keep_days = 7\naudit_max_bytes = 1000\narchive = false\n\n"
+        "[gc]\nbak_keep_days = 7\naudit_max_bytes = 1000\narchive = false\n"
+        "audit_archive_keep_days = 7\n\n"
         '[recall]\nauto_refresh = true\nrefresh_targets = ["~/docs/AGENTS.md"]\nlimit = 5\n',
     )
     cfg = load(path)
     assert cfg.gc.bak_keep_days == 7
     assert cfg.gc.audit_max_bytes == 1000
     assert cfg.gc.archive is False
+    assert cfg.gc.audit_archive_keep_days == 7
     assert cfg.recall.auto_refresh is True
     assert cfg.recall.refresh_targets == ["~/docs/AGENTS.md"]
     assert cfg.recall.limit == 5
@@ -139,11 +150,13 @@ def test_gc_recall_toml_loads(tmp_path, monkeypatch):
 def test_gc_recall_env_overrides(tmp_path, monkeypatch):
     _clear_gc_recall(monkeypatch)
     monkeypatch.setenv("ENGRAM_GC_BAK_KEEP_DAYS", "0")
+    monkeypatch.setenv("ENGRAM_GC_AUDIT_ARCHIVE_KEEP_DAYS", "3")
     monkeypatch.setenv("ENGRAM_RECALL_AUTO_REFRESH", "true")
     monkeypatch.setenv("ENGRAM_RECALL_REFRESH_TARGETS", "/tmp/AGENTS.md,/tmp/CLAUDE.md")
     monkeypatch.setenv("ENGRAM_RECALL_LIMIT", "9")
     cfg = load(tmp_path / "none.toml")
     assert cfg.gc.bak_keep_days == 0
+    assert cfg.gc.audit_archive_keep_days == 3
     assert cfg.recall.auto_refresh is True
     assert cfg.recall.refresh_targets == ["/tmp/AGENTS.md", "/tmp/CLAUDE.md"]
     assert cfg.recall.limit == 9
