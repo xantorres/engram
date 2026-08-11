@@ -176,11 +176,19 @@ def _load_recall(data: dict) -> RecallConfig:
 
 
 @dataclass
+class DedupConfig:
+    """Whether contradiction detection may consult the extractor model."""
+
+    semantic: bool = False
+
+
+@dataclass
 class Config:
     store_dir: Path
     extractor: ExtractorConfig
     autopromote: bool = False
     kind_allowlist: list[str] | None = None
+    dedup: DedupConfig = field(default_factory=DedupConfig)
     gc: GcConfig = field(default_factory=GcConfig)
     recall: RecallConfig = field(default_factory=RecallConfig)
 
@@ -194,6 +202,7 @@ def load(path: str | Path | None = None) -> Config:
     store = data.get("store", {})
     extractor = data.get("extractor", {})
     bridge = data.get("bridge", {})
+    dedup_section = data.get("dedup", {})
 
     store_dir_value = _check_str(store.get("dir"), "store.dir", optional=True)
     store_dir = Path(
@@ -206,6 +215,13 @@ def load(path: str | Path | None = None) -> Config:
     kind_allowlist = _env_list("ENGRAM_BRIDGE_KIND_ALLOWLIST", toml_allowlist or None)
     if kind_allowlist is not None:
         _validate_allowlist(kind_allowlist)
+
+    dedup = DedupConfig(
+        semantic=_env_bool(
+            "ENGRAM_DEDUP_SEMANTIC",
+            _check_bool(dedup_section.get("semantic", False), "dedup.semantic"),
+        ),
+    )
 
     return Config(
         store_dir=store_dir,
@@ -230,6 +246,7 @@ def load(path: str | Path | None = None) -> Config:
             _check_bool(bridge.get("autopromote", False), "bridge.autopromote"),
         ),
         kind_allowlist=kind_allowlist,
+        dedup=dedup,
         gc=_load_gc(data),
         recall=_load_recall(data),
     )

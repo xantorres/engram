@@ -299,3 +299,26 @@ def test_decayed_and_contradicted_are_different_states():
 def test_a_superseded_fact_is_not_reported_as_merely_decayed():
     contradicted = Memory(id="mem-0002", fact="uses codegraph", status=Status.superseded)
     assert doctor([contradicted])["stale"] == []
+
+
+def test_the_model_can_retire_a_pair_the_lexical_rules_cleared(tmp_path):
+    """"Madrid" and "Barcelona" share only "lives" -- no rule here can see it.
+
+    The judge is the only thing that can, so this is the whole reason it exists.
+    """
+    from engram.core.schema import Kind, Memory, Status
+    from engram.core.store import MarkdownStore
+
+    store = MarkdownStore(tmp_path)
+    old = store.add(
+        Memory(fact="The user lives in Madrid", kind=Kind.location, status=Status.promoted)
+    )
+    new = store.add(Memory(fact="The user lives in Barcelona", kind=Kind.location))
+
+    assert supersede.contradicts(new.fact, old.fact) is None  # lexical rules decline
+
+    flagged = supersede.flag_contradicted(
+        store, new, judge=lambda a, b: "a local model reads these as mutually exclusive"
+    )
+    assert flagged == (old.id,)
+    assert store.get(old.id).status == Status.superseded

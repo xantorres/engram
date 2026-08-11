@@ -39,3 +39,14 @@ stale_grace_days = 30
 # How long rotated audit.jsonl archives are kept before `gc --audit --apply`
 # deletes them. 0 keeps nothing. Override via ENGRAM_GC_AUDIT_ARCHIVE_KEEP_DAYS.
 audit_archive_keep_days = 90
+
+[dedup]
+# Contradiction detection is lexical and offline by default: a value swapped on
+# a shared subject, two facts claiming one exclusive role, or an explicit
+# removal are all caught with no model call.
+# Turn this on to also put pairs those rules cleared to your extractor model --
+# "lives in Madrid" against "lives in Barcelona" share too few words for any
+# lexical rule to see. Costs one local call per plausibly-related pair, and it
+# fails open: an unreachable model leaves the lexical answer alone rather than
+# breaking a capture. Override with ENGRAM_DEDUP_SEMANTIC=true
+semantic = false

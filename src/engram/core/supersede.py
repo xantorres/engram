@@ -31,8 +31,9 @@ from __future__ import annotations
 
 import contextlib
 import re
+from collections.abc import Callable
 
-from engram.core import atomic, dedup, tiers
+from engram.core import atomic, dedup, semantic, tiers
 from engram.core.locking import store_lock
 from engram.core.schema import Memory, Status
 from engram.core.store import MarkdownStore, Store
@@ -50,8 +51,19 @@ _REMOVAL = re.compile(
     r"|decommissioned|no\s+longer|not\s+installed|gone)\b"
 )
 
-def contradicts(new_fact: str, old_fact: str) -> str | None:
-    """Why ``new_fact`` retires ``old_fact``, or ``None`` if they can coexist."""
+def contradicts(
+    new_fact: str,
+    old_fact: str,
+    *,
+    judge: Callable[[str, str], str | None] | None = None,
+) -> str | None:
+    """Why ``new_fact`` retires ``old_fact``, or ``None`` if they can coexist.
+
+    ``judge`` is consulted only once every lexical rule has declined. Those rules
+    require a distinctive shared word, so a pair that disagrees in meaning while
+    sharing almost no wording reaches here as a false negative; the model is the
+    only thing that can see it. Absent or unreachable, the lexical answer stands.
+    """
     verdict = dedup.compare(new_fact, old_fact)
     if verdict == "duplicate":
         return None
@@ -59,12 +71,12 @@ def contradicts(new_fact: str, old_fact: str) -> str | None:
         return "the same subject carries a different value"
     anchor = dedup.shared_anchor(new_fact, old_fact)
     if anchor is None:
-        return None
+        return semantic.consult(new_fact, old_fact, judge=judge)
     if _REMOVAL.search(new_fact):
         return f"{anchor!r} is reported gone, but this fact still asserts it"
     if _EXCLUSIVE.search(new_fact) and _EXCLUSIVE.search(old_fact):
         return f"both claim an exclusive role for {anchor!r}"
-    return None
+    return semantic.consult(new_fact, old_fact, judge=judge)
 
 
 def flag_contradicted(
@@ -73,6 +85,7 @@ def flag_contradicted(
     *,
     promoted: list[Memory] | None = None,
     retire: bool = True,
+    judge: Callable[[str, str], str | None] | None = None,
 ) -> tuple[str, ...]:
     """Retire every promoted fact ``candidate`` contradicts; return their ids.
 
@@ -107,7 +120,7 @@ def flag_contradicted(
         for existing in pool:
             if existing.id == candidate.id:
                 continue
-            reason = contradicts(candidate.fact, existing.fact)
+            reason = contradicts(candidate.fact, existing.fact, judge=judge)
             if reason is None:
                 continue
             if not retire:

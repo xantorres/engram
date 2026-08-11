@@ -13,6 +13,7 @@ from fastmcp.exceptions import ToolError
 from engram.capture.active import CaptureRefused
 from engram.config import load as load_config
 from engram.core.schema import Kind
+from engram.core.semantic import judge_for
 from engram.core.store import MarkdownStore
 from engram.recall.context import render_block
 from engram.recall.rank import rank, to_dict
@@ -20,13 +21,16 @@ from engram.recall.rank import rank, to_dict
 mcp = FastMCP("engram")
 
 
-def _store() -> MarkdownStore:
-    config = load_config()
+def _store_for(config) -> MarkdownStore:
     return MarkdownStore(
         config.store_dir,
         bak_keep_days=config.gc.bak_keep_days,
         audit_max_bytes=config.gc.audit_max_bytes,
     )
+
+
+def _store() -> MarkdownStore:
+    return _store_for(load_config())
 
 
 def _kind(value: str) -> Kind:
@@ -47,7 +51,15 @@ def remember(fact: str, kind: str = "preference", confidence: float = 0.6) -> st
         # captured here is filed for review, never applied - otherwise recall()
         # plus one remember() would be an erasure primitive for any agent that
         # read a malicious instruction.
-        result = stage(_store(), fact, kind=_kind(kind), confidence=confidence, retire=False)
+        config = load_config()
+        result = stage(
+            _store_for(config),
+            fact,
+            kind=_kind(kind),
+            confidence=confidence,
+            retire=False,
+            judge=judge_for(config),
+        )
     except CaptureRefused as e:  # pragma: no cover - stage() reports, never raises
         raise ToolError(str(e)) from e
     if not result.admitted:

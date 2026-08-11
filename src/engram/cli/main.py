@@ -32,6 +32,12 @@ def _store_for(config) -> MarkdownStore:
     )
 
 
+def _judge_for(config):
+    from engram.core.semantic import judge_for
+
+    return judge_for(config)
+
+
 def _store() -> MarkdownStore:
     return _store_for(load_config())
 
@@ -73,7 +79,15 @@ def remember(
         typer.echo(f"unknown kind {kind!r}; valid kinds: {valid}", err=True)
         raise typer.Exit(2) from None
 
-    result = stage(_store(), fact, kind=parsed_kind, confidence=confidence, force=force)
+    config = load_config()
+    result = stage(
+        _store_for(config),
+        fact,
+        kind=parsed_kind,
+        confidence=confidence,
+        force=force,
+        judge=_judge_for(config),
+    )
     if not result.admitted:
         typer.echo(f"not staged: {result.reason}")
         typer.echo("pass --force to stage it anyway")
@@ -113,6 +127,7 @@ def harvest(
         harness=harness,
         extractor=Extractor(config.extractor),
         min_confidence=min_confidence,
+        judge=_judge_for(config),
     )
     typer.echo(
         f"staged {result['staged']} candidate(s) from {path} "

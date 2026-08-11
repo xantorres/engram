@@ -12,6 +12,7 @@ it contradicts. Both are handled here so every caller inherits them.
 from __future__ import annotations
 
 import contextlib
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from engram.core import screen, supersede, tiers
@@ -53,6 +54,7 @@ def stage(
     source: str = "tool:remember",
     force: bool = False,
     retire: bool = True,
+    judge: Callable[[str, str], str | None] | None = None,
 ) -> CaptureResult:
     """Screen, stage, and deal with whatever the new fact contradicts.
 
@@ -102,7 +104,7 @@ def stage(
         # written since the snapshot was taken.
         promoted = [m for m in known if m.status == Status.promoted]
         collided = supersede.flag_contradicted(
-            store, memory, promoted=promoted, retire=retire
+            store, memory, promoted=promoted, retire=retire, judge=judge
         )
         return CaptureResult(
             memory=memory,

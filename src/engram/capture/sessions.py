@@ -7,6 +7,7 @@ near-duplicate candidates, and stages the survivors.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from engram.capture.readers import base, claude_code, codex, opencode
@@ -51,6 +52,7 @@ def harvest_session(
     extractor: SupportsComplete,
     min_confidence: float = 0.5,
     max_chars: int = 12000,
+    judge: Callable[[str, str], str | None] | None = None,
 ) -> dict:
     """Harvest and stage facts from a single transcript session.
 
@@ -87,7 +89,7 @@ def harvest_session(
         mem = store.add(candidate.model_copy(update={"project": project}))
         staged.append(mem)
         existing.append(mem)
-        superseded.extend(supersede.flag_contradicted(store, mem))
+        superseded.extend(supersede.flag_contradicted(store, mem, judge=judge))
 
     return {
         "memories": staged,
