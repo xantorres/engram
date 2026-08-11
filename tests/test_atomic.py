@@ -1,3 +1,4 @@
+import gzip
 import json
 import os
 import stat
@@ -171,3 +172,27 @@ def test_legacy_plain_json_bak_still_restores(tmp_path):
 
     assert res["ok"] is True
     assert target.read_text() == "old text"
+
+
+def test_undo_token_survives_zero_day_bak_retention(tmp_path):
+    """Retention must never collect the snapshot the current write depends on."""
+    target = tmp_path / "memory.md"
+    target.write_text("original\n", encoding="utf-8")
+    res = atomic_write(
+        target, "replaced\n", root=tmp_path, retention=RetentionPolicy(bak_keep_days=0)
+    )
+    assert restore_from_bak(res["undo_token"], root=tmp_path)["ok"] is True
+    assert target.read_text(encoding="utf-8") == "original\n"
+
+
+def test_restore_reports_an_unreadable_snapshot_instead_of_raising(tmp_path):
+    """Every other failure returns an error dict; a corrupt snapshot must too."""
+    bak_dir = secure_dir(_bak_dir(tmp_path))
+    (bak_dir / "aaaaaaaaaaaa.bak").write_bytes(b"")
+    (bak_dir / "bbbbbbbbbbbb.bak").write_bytes(gzip.compress(b'{"path": "x"}')[:10])
+    (bak_dir / "cccccccccccc.bak").write_bytes(gzip.compress(b'{"no_path": 1}'))
+    for token in ("aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc"):
+        assert restore_from_bak(token, root=tmp_path) == {
+            "ok": False,
+            "error": "unreadable snapshot",
+        }

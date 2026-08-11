@@ -14,6 +14,7 @@ import os
 import re
 import tempfile
 import uuid
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -134,6 +135,9 @@ def atomic_write(
     retention = retention or RetentionPolicy()
     secure_dir(_bak_dir(root))
     secure_dir(path.parent)
+    # Prune before snapshotting. Run afterwards, a zero-day window collects the
+    # snapshot this very write just took and the returned token restores nothing.
+    _prune_bak(root, retention.bak_keep_days)
 
     token = uuid.uuid4().hex[:12]
     previous = path.read_text(encoding="utf-8") if path.exists() else None
@@ -166,7 +170,6 @@ def atomic_write(
         },
         max_bytes=retention.audit_max_bytes,
     )
-    _prune_bak(root, retention.bak_keep_days)
     return {"ok": True, "undo_token": token, "path": str(path)}
 
 
@@ -187,17 +190,23 @@ def restore_from_bak(token: str, *, root: str | Path) -> dict:
         # Gzip magic bytes distinguish current snapshots from legacy plain-JSON
         # ones written before compression; both must keep restoring.
         is_gzip = raw[:2] == b"\x1f\x8b"
-        text = gzip.decompress(raw).decode("utf-8") if is_gzip else raw.decode("utf-8")
-        record = json.loads(text)
-        target = Path(record["path"]).resolve()
+        try:
+            text = gzip.decompress(raw).decode("utf-8") if is_gzip else raw.decode("utf-8")
+            record = json.loads(text)
+            recorded_path, content = record["path"], record["content"]
+        except (OSError, EOFError, UnicodeDecodeError, ValueError, zlib.error, TypeError, KeyError):
+            # A snapshot truncated by a full disk or a killed process is a failed
+            # undo, not a crash; every other failure here returns an error dict.
+            return {"ok": False, "error": "unreadable snapshot"}
+        target = Path(recorded_path).resolve()
         try:
             target.relative_to(root.resolve())
         except ValueError:
             return {"ok": False, "error": "refusing to restore outside store root"}
-        if record["content"] is None:
+        if content is None:
             if target.exists():
                 target.unlink()
         else:
-            target.write_text(record["content"], encoding="utf-8")
+            target.write_text(content, encoding="utf-8")
         secure_file(target)
         return {"ok": True, "path": str(target)}
