@@ -185,3 +185,66 @@ def test_review_reject(tmp_path):
     review.reject(store, mid, reason="wrong")
     assert store.get(mid).status == Status.rejected
     assert store.queue_get(mid) is None
+
+
+def test_pending_reviews_includes_unenveloped_awaiting(tmp_path):
+    store = _store_with(
+        tmp_path,
+        Memory(fact="prefers pnpm", kind=Kind.tooling),
+        Memory(fact="prefers uv", kind=Kind.tooling),
+    )
+    enqueued = store.add(Memory(fact="VAT is 12345678X", kind=Kind.fiscal))
+    store.enqueue(enqueued, dest="memory.md", reason="needs review")
+
+    items = review.pending_reviews(store)
+
+    assert len(items) == 3
+    by_id = {item["memory"]["id"]: item for item in items}
+    assert by_id[enqueued.id]["envelope"] is True
+    assert by_id[enqueued.id]["dest"] == "memory.md"
+    assert by_id[enqueued.id]["reason"] == "needs review"
+    plain_ids = [mid for mid in by_id if mid != enqueued.id]
+    assert len(plain_ids) == 2
+    for mid in plain_ids:
+        assert by_id[mid]["envelope"] is False
+        assert by_id[mid]["reason"] == "pending"
+
+
+def test_pending_reviews_surfaces_dispute_envelope_on_promoted(tmp_path):
+    # A dispute filed via retire=False leaves the older fact promoted (by
+    # design - see flag_contradicted) while filing a live envelope for it.
+    # That envelope must surface it: this is the dispute case, not an orphan.
+    from engram.capture.active import stage
+
+    store = MarkdownStore(tmp_path)
+    old = store.add(
+        Memory(
+            fact="The user prefers TypeScript for all new backend services.",
+            status=Status.promoted,
+            last_verified=dt.date.today(),
+        )
+    )
+
+    result = stage(store, "TypeScript was uninstalled from the machine.", retire=False)
+    assert result.disputed == (old.id,)
+
+    envelope = store.queue_get(old.id)
+    by_id = {item["memory"]["id"]: item for item in review.pending_reviews(store)}
+
+    assert store.get(old.id).status == Status.promoted
+    assert old.id in by_id
+    assert by_id[old.id]["envelope"] is True
+    assert by_id[old.id]["reason"] == envelope["reason"]
+
+
+def test_pending_reviews_skips_malformed_envelope(tmp_path):
+    store = _store_with(tmp_path, Memory(fact="prefers pnpm", kind=Kind.tooling))
+    normal = store.list()[0]
+
+    queue_dir = tmp_path / "queue"
+    queue_dir.mkdir(exist_ok=True)
+    (queue_dir / "malformed.json").write_text(json.dumps({"reason": "junk"}))
+
+    items = review.pending_reviews(store)
+
+    assert [item["memory"]["id"] for item in items] == [normal.id]

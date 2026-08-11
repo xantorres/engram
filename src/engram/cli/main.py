@@ -234,9 +234,19 @@ def queue() -> None:
     """List memories awaiting review."""
     from engram.bridge import review
 
-    for item in review.pending_reviews(_store()):
+    items = review.pending_reviews(_store())
+    enveloped = 0
+    for item in items:
         mem = item["memory"]
-        typer.echo(f"{mem['id']}  [{mem['kind']}]  {mem['fact']}  ({item.get('reason', 'review')})")
+        suffix = ""
+        if item.get("envelope"):
+            enveloped += 1
+            suffix = "  [envelope]"
+        typer.echo(
+            f"{mem['id']}  [{mem['kind']}]  {mem['fact']}  ({item.get('reason', 'review')}){suffix}"
+        )
+    if items:
+        typer.echo(f"{len(items)} awaiting review ({enveloped} with envelope)")
 
 
 @app.command()

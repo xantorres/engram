@@ -252,3 +252,21 @@ def test_forget_reports_truthful_wording(tmp_path, monkeypatch):
     assert "removed" in result.stdout
     assert "may retain" in result.stdout
     assert "forgotten" not in result.stdout
+
+
+def test_queue_lists_unenveloped_pending_with_marker(tmp_path, monkeypatch):
+    store_dir = tmp_path / "store"
+    monkeypatch.setenv("ENGRAM_STORE", str(store_dir))
+    store = MarkdownStore(store_dir)
+    store.add(Memory(fact="prefers pnpm", kind=Kind.tooling))
+    store.add(Memory(fact="prefers uv", kind=Kind.tooling))
+    enqueued = store.add(Memory(fact="VAT is 12345678X", kind=Kind.fiscal))
+    store.enqueue(enqueued, dest="memory.md", reason="needs review")
+
+    result = runner.invoke(app, ["queue"])
+
+    assert result.exit_code == 0
+    data_rows = [line for line in result.stdout.splitlines() if line.startswith("mem-")]
+    assert len(data_rows) == 3
+    assert result.stdout.count("[envelope]") == 1
+    assert "3 awaiting review (1 with envelope)" in result.stdout

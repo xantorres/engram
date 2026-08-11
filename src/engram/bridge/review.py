@@ -26,7 +26,26 @@ AWAITING_REVIEW = (Status.pending, Status.stale, Status.superseded)
 
 
 def pending_reviews(store: Store) -> list[dict]:
-    return store.queue_list()
+    """List awaiting-review memories in registry order, envelope-joined by id when one exists.
+
+    A live envelope surfaces its memory regardless of status - a promoted fact
+    under dispute stays visible until the envelope is resolved, since the
+    envelope's reason is what explains why it needs another look.
+    """
+    envelopes = {
+        item["memory"]["id"]: item
+        for item in store.queue_list()
+        if isinstance(item.get("memory"), dict) and "id" in item["memory"]
+    }
+    items: list[dict] = []
+    for memory in store.list():
+        envelope = envelopes.get(memory.id)
+        if envelope is not None:
+            items.append({**envelope, "envelope": True})
+        elif memory.status in AWAITING_REVIEW:
+            reason = memory.status.value
+            items.append({"memory": memory.as_item(), "reason": reason, "envelope": False})
+    return items
 
 
 def _awaiting(store: Store, memory_id: str) -> tuple[Memory, str] | dict:
