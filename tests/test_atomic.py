@@ -5,6 +5,7 @@ import stat
 import time
 
 from engram.core.atomic import (
+    _MAX_SNAPSHOT_BYTES,
     RetentionPolicy,
     _bak_dir,
     _prune_bak,
@@ -41,6 +42,18 @@ def test_write_then_undo_restores_previous(tmp_path):
 
     restore_from_bak(res["undo_token"], root=tmp_path)
     assert target.read_text() == "original"
+
+
+def test_write_then_undo_restores_empty_prior_content(tmp_path):
+    """Empty string is a real prior value distinct from None (file did not exist)."""
+    target = tmp_path / "f.md"
+    target.write_text("", encoding="utf-8")
+    res = atomic_write(target, "changed", root=tmp_path)
+    assert target.read_text() == "changed"
+
+    restore_from_bak(res["undo_token"], root=tmp_path)
+    assert target.exists()
+    assert target.read_text() == ""
 
 
 def test_audit_record_written(tmp_path):
@@ -196,3 +209,32 @@ def test_restore_reports_an_unreadable_snapshot_instead_of_raising(tmp_path):
             "ok": False,
             "error": "unreadable snapshot",
         }
+
+
+def test_restore_rejects_oversized_snapshot(tmp_path):
+    """A .bak that would inflate past the cap is refused, not allocated."""
+    bak_dir = secure_dir(_bak_dir(tmp_path))
+    token = "0123456789ab"
+    oversized_content = "0" * (_MAX_SNAPSHOT_BYTES + 1024)
+    payload = json.dumps({"path": str(tmp_path / "f.md"), "content": oversized_content}).encode(
+        "utf-8"
+    )
+    bak = bak_dir / f"{token}.bak"
+    bak.write_bytes(gzip.compress(payload))
+    bak.chmod(0o600)
+
+    res = restore_from_bak(token, root=tmp_path)
+
+    assert res == {"ok": False, "error": "snapshot exceeds size cap"}
+
+
+def test_restore_still_restores_snapshot_under_the_cap(tmp_path):
+    """The cap only refuses oversized snapshots; ordinary ones still roundtrip."""
+    target = tmp_path / "f.md"
+    prior = "line one of many\n" * 5000  # comfortably under the cap
+    target.write_text(prior)
+
+    res = atomic_write(target, "new content", root=tmp_path)
+    restore_from_bak(res["undo_token"], root=tmp_path)
+
+    assert target.read_text() == prior

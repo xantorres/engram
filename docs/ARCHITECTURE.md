@@ -41,10 +41,11 @@ capture/ extract/ <- active remember + transcript harvest; pluggable extractor L
   retired fact goes to review, never to the bin, and an agent cannot retire a
   reviewed fact unilaterally.
 - **`freshness.py`** parses decay horizons and decides staleness.
-- **`gc.py`** is the retention sweep: prune `.bak`, rotate the audit log,
-  archive rejected and long-stale facts, and re-dedup the promoted set. Without
-  it a store grows without bound — undo history outweighs the memory it protects
-  by orders of magnitude within weeks.
+- **`gc.py`** is the retention sweep: prune `.bak`, rotate the audit log and
+  delete rotated archives past `gc.audit_archive_keep_days`, archive rejected
+  and long-stale facts, and re-dedup the promoted set. Without it a store grows
+  without bound — undo history outweighs the memory it protects by orders of
+  magnitude within weeks.
 
 ## Capture (`capture/`, `extract/`)
 

@@ -48,6 +48,12 @@ def _check_str_list(value: object, name: str) -> list[str]:
     return value
 
 
+def _check_non_negative(value: int, name: str) -> int:
+    if value < 0:
+        raise ConfigError(f"{name} must be >= 0, got {value}")
+    return value
+
+
 def _validate_allowlist(items: list[str]) -> None:
     """Every allowlisted kind must be real and non-curated.
 
@@ -138,9 +144,14 @@ def _load_gc(data: dict) -> GcConfig:
             "ENGRAM_GC_STALE_GRACE_DAYS",
             _check_int(section.get("stale_grace_days", 30), "gc.stale_grace_days"),
         ),
-        audit_archive_keep_days=_env_int(
-            "ENGRAM_GC_AUDIT_ARCHIVE_KEEP_DAYS",
-            _check_int(section.get("audit_archive_keep_days", 90), "gc.audit_archive_keep_days"),
+        audit_archive_keep_days=_check_non_negative(
+            _env_int(
+                "ENGRAM_GC_AUDIT_ARCHIVE_KEEP_DAYS",
+                _check_int(
+                    section.get("audit_archive_keep_days", 90), "gc.audit_archive_keep_days"
+                ),
+            ),
+            "gc.audit_archive_keep_days",
         ),
     )
 

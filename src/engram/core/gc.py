@@ -84,7 +84,13 @@ class GarbageCollector:
         if not bak_dir.exists():
             return {"pruned": 0}
         cutoff = dt.datetime.now(dt.UTC).timestamp() - self.config.bak_keep_days * 86400
-        count = sum(1 for p in bak_dir.glob("*.bak") if p.stat().st_mtime < cutoff)
+        count = 0
+        for p in bak_dir.glob("*.bak"):
+            try:
+                if p.stat().st_mtime < cutoff:
+                    count += 1
+            except OSError:
+                continue
         return {"pruned": count}
 
     def _audit(self, apply: bool) -> dict:

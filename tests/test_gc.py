@@ -88,6 +88,27 @@ def test_gc_audit_same_pass_rotation_survives_prune(tmp_path):
     assert report["audit"]["archives_pruned"] == 0
 
 
+def test_gc_audit_keep_days_zero_discards_same_pass_rotation(tmp_path):
+    """keep_days=0 means rotate-then-discard immediately, including this pass's own archive.
+
+    Mirrors _prune_bak's "keep_days=0 keeps nothing" for .bak snapshots: a zero
+    retention window has no grace period, not even for the rotation this same
+    sweep just performed.
+    """
+    store = MarkdownStore(tmp_path)
+    audit = store.root / "audit.jsonl"
+    audit.write_text('{"ts": "now"}\n' * 20, encoding="utf-8")
+
+    gc = GarbageCollector(store, GcConfig(audit_max_bytes=50, audit_archive_keep_days=0))
+    report = gc.run(GcOptions(audit=True), apply=True)
+
+    assert report["audit"]["rotated"] is True
+    assert list(store.root.glob("audit.jsonl.*")) == []
+    # _rotate_audit only renames the live file aside; nothing in this sweep
+    # recreates it, so it stays absent until the next atomic_write.
+    assert not audit.exists()
+
+
 def test_gc_audit_dry_run_survives_an_unstattable_archive(tmp_path):
     """The read-only path must be at least as forgiving as the one that deletes."""
     store = MarkdownStore(tmp_path)
@@ -98,3 +119,16 @@ def test_gc_audit_dry_run_survives_an_unstattable_archive(tmp_path):
         GcOptions(audit=True), apply=False
     )
     assert report["audit"]["archives_pruned"] == 0
+
+
+def test_gc_bak_dry_run_survives_an_unstattable_snapshot(tmp_path):
+    """Same forgiveness on the .bak side: a dangling symlink must not crash the preview."""
+    store = MarkdownStore(tmp_path)
+    bak_dir = store.root / ".bak"
+    bak_dir.mkdir(parents=True, exist_ok=True)
+    (bak_dir / "aaaaaaaaaaaa.bak").symlink_to(bak_dir / "gone")
+
+    report = GarbageCollector(store, GcConfig(bak_keep_days=14)).run(
+        GcOptions(bak=True), apply=False
+    )
+    assert report["bak"]["pruned"] == 0

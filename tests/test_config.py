@@ -113,6 +113,27 @@ def test_gc_audit_archive_keep_days_non_int_raises(tmp_path, monkeypatch):
         load(path)
 
 
+def test_gc_audit_archive_keep_days_negative_via_toml_raises(tmp_path, monkeypatch):
+    _clear_gc_recall(monkeypatch)
+    path = _write(tmp_path, "[gc]\naudit_archive_keep_days = -1\n")
+    with pytest.raises(ConfigError):
+        load(path)
+
+
+def test_gc_audit_archive_keep_days_negative_via_env_raises(tmp_path, monkeypatch):
+    _clear_gc_recall(monkeypatch)
+    monkeypatch.setenv("ENGRAM_GC_AUDIT_ARCHIVE_KEEP_DAYS", "-1")
+    with pytest.raises(ConfigError):
+        load(tmp_path / "none.toml")
+
+
+def test_gc_audit_archive_keep_days_zero_loads_fine(tmp_path, monkeypatch):
+    _clear_gc_recall(monkeypatch)
+    path = _write(tmp_path, "[gc]\naudit_archive_keep_days = 0\n")
+    cfg = load(path)
+    assert cfg.gc.audit_archive_keep_days == 0
+
+
 def test_gc_ignores_legacy_archive_key(tmp_path, monkeypatch):
     """Withdrawing the knob must not break configs that still set it."""
     _clear_gc_recall(monkeypatch)

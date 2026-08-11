@@ -25,6 +25,11 @@ _TOKEN_RE = re.compile(r"^[0-9a-f]{12}$")
 DIR_MODE = 0o700
 FILE_MODE = 0o600
 
+# Real snapshots are prior file contents, so low-MB scale; 64 MiB is generous
+# headroom without leaving the cap effectively unbounded.
+_MAX_SNAPSHOT_BYTES = 64 * 1024**2
+_GUNZIP_STEP = 1024 * 1024
+
 
 @dataclass(frozen=True)
 class RetentionPolicy:
@@ -103,8 +108,11 @@ def _rotate_audit(root: str | Path, max_bytes: int | None) -> Path | None:
         target = audit.with_name(f"audit.jsonl.{stamp}.{suffix}")
     audit.rename(target)
     # Rename preserves mtime (= last append time), which can already be older
-    # than a retention cutoff; stamp "now" so the archive isn't eligible for
-    # pruning in the very sweep that just created it.
+    # than a retention cutoff; stamp "now" so a positive keep-days window
+    # doesn't treat the archive as eligible in the very sweep that just
+    # created it. keep_days=0 has no such window - its cutoff is "now" too,
+    # so the fresh stamp does not save it, matching _prune_bak's "0 keeps
+    # nothing" for .bak snapshots.
     os.utime(target, None)
     return target
 
@@ -173,6 +181,33 @@ def atomic_write(
     return {"ok": True, "undo_token": token, "path": str(path)}
 
 
+def _bounded_gunzip(raw: bytes, limit: int) -> bytes | None:
+    """Inflate a gzip payload, refusing to let the output grow past ``limit``.
+
+    gzip.decompress() has no size cap, so a small malicious or corrupted
+    snapshot can force an allocation orders of magnitude larger than any real
+    prior file content. Feeding a streaming decompressor with a capped
+    max_length keeps peak memory near ``limit`` regardless of the compression
+    ratio, and this returns ``None`` instead of materializing the rest once
+    that cap is crossed.
+    """
+    decompressor = zlib.decompressobj(wbits=zlib.MAX_WBITS | 16)
+    out = bytearray()
+    for start in range(0, len(raw), _GUNZIP_STEP):
+        pending = raw[start : start + _GUNZIP_STEP]
+        while pending:
+            out += decompressor.decompress(pending, _GUNZIP_STEP)
+            if len(out) > limit:
+                return None
+            pending = decompressor.unconsumed_tail
+    out += decompressor.flush()
+    if len(out) > limit:
+        return None
+    if not decompressor.eof:
+        raise EOFError("compressed snapshot ended before the end-of-stream marker was reached")
+    return bytes(out)
+
+
 def restore_from_bak(token: str, *, root: str | Path) -> dict:
     """Undo a write by token, deleting the file if the write had created it.
 
@@ -191,7 +226,13 @@ def restore_from_bak(token: str, *, root: str | Path) -> dict:
         # ones written before compression; both must keep restoring.
         is_gzip = raw[:2] == b"\x1f\x8b"
         try:
-            text = gzip.decompress(raw).decode("utf-8") if is_gzip else raw.decode("utf-8")
+            if is_gzip:
+                inflated = _bounded_gunzip(raw, _MAX_SNAPSHOT_BYTES)
+                if inflated is None:
+                    return {"ok": False, "error": "snapshot exceeds size cap"}
+                text = inflated.decode("utf-8")
+            else:
+                text = raw.decode("utf-8")
             record = json.loads(text)
             recorded_path, content = record["path"], record["content"]
         except (OSError, EOFError, UnicodeDecodeError, ValueError, zlib.error, TypeError, KeyError):
