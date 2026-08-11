@@ -248,3 +248,28 @@ def test_pending_reviews_skips_malformed_envelope(tmp_path):
     items = review.pending_reviews(store)
 
     assert [item["memory"]["id"] for item in items] == [normal.id]
+
+
+def test_pending_reviews_keeps_an_envelope_whose_fact_left_the_registry(tmp_path):
+    """gc compacting a fact out of memory.md must not erase its pending review."""
+    store = MarkdownStore(tmp_path)
+    memory = store.add(Memory(fact="VAT is 12345678X", kind=Kind.fiscal, status=Status.rejected))
+    store.enqueue(memory, dest="memory.md", reason="curated kind needs review")
+    store.archive_rejected()
+
+    assert store.get(memory.id) is None
+    assert store.queue_get(memory.id) is not None
+    items = review.pending_reviews(store)
+    assert [item["memory"]["id"] for item in items] == [memory.id]
+    assert items[0]["orphan"] is True
+
+
+def test_enveloped_row_shows_the_registry_fact_not_the_queued_snapshot(tmp_path):
+    """The registry is the source of truth the user hand-edits; the listing must match it."""
+    store = MarkdownStore(tmp_path)
+    memory = store.add(Memory(fact="prefers pnpm", kind=Kind.tooling))
+    store.enqueue(memory, dest="memory.md", reason="needs review")
+    store.update(memory.model_copy(update={"fact": "prefers bun"}))
+
+    items = review.pending_reviews(store)
+    assert [item["memory"]["fact"] for item in items] == ["prefers bun"]

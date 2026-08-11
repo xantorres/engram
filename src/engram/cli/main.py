@@ -241,7 +241,7 @@ def queue() -> None:
         suffix = ""
         if item.get("envelope"):
             enveloped += 1
-            suffix = "  [envelope]"
+            suffix = "  [envelope, fact archived]" if item.get("orphan") else "  [envelope]"
         typer.echo(
             f"{mem['id']}  [{mem['kind']}]  {mem['fact']}  ({item.get('reason', 'review')}){suffix}"
         )

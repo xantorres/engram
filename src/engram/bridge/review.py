@@ -31,6 +31,11 @@ def pending_reviews(store: Store) -> list[dict]:
     A live envelope surfaces its memory regardless of status - a promoted fact
     under dispute stays visible until the envelope is resolved, since the
     envelope's reason is what explains why it needs another look.
+
+    The fact text comes from the registry, matching what approve and reject will
+    act on; the envelope contributes its dest and reason. An envelope whose fact
+    has since been compacted into the archive keeps its row, flagged ``orphan``
+    and carrying the frozen snapshot, since nothing else would ever show it again.
     """
     envelopes = {
         item["memory"]["id"]: item
@@ -38,13 +43,18 @@ def pending_reviews(store: Store) -> list[dict]:
         if isinstance(item.get("memory"), dict) and "id" in item["memory"]
     }
     items: list[dict] = []
+    joined: set[str] = set()
     for memory in store.list():
         envelope = envelopes.get(memory.id)
         if envelope is not None:
-            items.append({**envelope, "envelope": True})
+            joined.add(memory.id)
+            items.append({**envelope, "memory": memory.as_item(), "envelope": True})
         elif memory.status in AWAITING_REVIEW:
             reason = memory.status.value
             items.append({"memory": memory.as_item(), "reason": reason, "envelope": False})
+    for memory_id, envelope in envelopes.items():
+        if memory_id not in joined:
+            items.append({**envelope, "envelope": True, "orphan": True})
     return items
 
 
@@ -210,6 +220,12 @@ def forget(store: Store, memory_id: str) -> dict:
                 undo_token = ""
         except KeyError:
             return {"ok": False, "error": f"concurrent write conflict for {memory_id}"}
+        try:
+            store.resolve_queue(memory_id)
+        except Exception:
+            if undo_token and root is not None:
+                atomic.restore_from_bak(undo_token, root=root)
+            raise
 
         # A dedicated audit entry keeps the forget action traceable by endpoint.
         if root is not None:
