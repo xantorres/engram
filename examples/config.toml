@@ -33,9 +33,6 @@ audit_max_bytes = 5_000_000
 # How long resolved review-queue entries are kept before gc deletes them.
 queue_done_keep_days = 30
 
-# Reserved for a future archive-vs-delete toggle; not yet wired to a behavior.
-archive = true
-
 # Extra days a stale fact stays recoverable before gc archives it for good.
 stale_grace_days = 30
 

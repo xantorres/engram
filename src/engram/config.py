@@ -36,7 +36,7 @@ def _check_bool(value: object, name: str) -> bool:
 
 
 def _check_int(value: object, name: str) -> int:
-    # bool is an int subclass; reject it so `archive = true` can't pass as a count.
+    # bool is an int subclass; reject it so a bare `true` can't pass as a count.
     if isinstance(value, bool) or not isinstance(value, int):
         raise ConfigError(f"{name} must be an integer, got {type(value).__name__}")
     return value
@@ -106,7 +106,6 @@ class GcConfig:
     bak_keep_days: int = 14
     audit_max_bytes: int = 5_000_000
     queue_done_keep_days: int = 30
-    archive: bool = True
     stale_grace_days: int = 30
     audit_archive_keep_days: int = 90
 
@@ -134,10 +133,6 @@ def _load_gc(data: dict) -> GcConfig:
         queue_done_keep_days=_env_int(
             "ENGRAM_GC_QUEUE_DONE_KEEP_DAYS",
             _check_int(section.get("queue_done_keep_days", 30), "gc.queue_done_keep_days"),
-        ),
-        archive=_env_bool(
-            "ENGRAM_GC_ARCHIVE",
-            _check_bool(section.get("archive", True), "gc.archive"),
         ),
         stale_grace_days=_env_int(
             "ENGRAM_GC_STALE_GRACE_DAYS",
