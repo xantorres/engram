@@ -290,6 +290,11 @@ class MarkdownStore(Store):
         except Exception:
             atomic.restore_from_bak(arch_result["undo_token"], root=self.root)
             raise
+        # A memory that leaves the live registry must not leave its queue
+        # envelope behind - an orphaned envelope keeps resurfacing an archived
+        # fact's stale pre-archive snapshot in review, forever.
+        for memory in move:
+            self.resolve_queue(memory.id)
 
     def archive_rejected(self, *, dry_run: bool = False) -> dict:
         """Move ``rejected`` facts out of the live registry into archive.md."""

@@ -169,6 +169,29 @@ def test_archive_rejected_dry_run_changes_nothing(tmp_path):
     assert not (tmp_path / "archive.md").exists()
 
 
+def test_archive_rejected_resolves_queue_envelope(tmp_path):
+    """A rejected fact archived out of the live registry must not leave its
+    envelope behind - an orphaned envelope keeps resurfacing it in review
+    forever, since nothing else will ever remove it from the queue."""
+    store = MarkdownStore(tmp_path)
+    drop = store.add(Memory(fact="some rejected fact", status=Status.rejected))
+    store.enqueue(drop, dest="memory.md", reason="stale envelope")
+
+    store.archive_rejected()
+
+    assert store.queue_get(drop.id) is None
+
+
+def test_archive_rejected_dry_run_leaves_queue_envelope(tmp_path):
+    store = MarkdownStore(tmp_path)
+    drop = store.add(Memory(fact="some rejected fact", status=Status.rejected))
+    store.enqueue(drop, dest="memory.md", reason="stale envelope")
+
+    store.archive_rejected(dry_run=True)
+
+    assert store.queue_get(drop.id) is not None
+
+
 def _aged(fact, *, days, decay="180d"):
     learned = dt.date.today() - dt.timedelta(days=days)
     return Memory(fact=fact, status=Status.promoted, decay=decay, learned_at=learned)
@@ -192,6 +215,31 @@ def test_mark_and_archive_stale(tmp_path):
     assert remaining[recently_stale.id].status == Status.stale
     assert long_stale.id not in remaining
     assert store.list_archived()[0].id == long_stale.id
+
+
+def test_mark_and_archive_stale_resolves_queue_envelope_for_archived(tmp_path):
+    """The verified orphan path: a disputed promoted fact whose decay clears the
+    grace window is archived by gc --stale --apply. Its envelope must go with it."""
+    store = MarkdownStore(tmp_path)
+    long_stale = store.add(_aged("long dead stale fact here", days=400))
+    store.enqueue(long_stale, dest="memory.md", reason="disputed by mem-0002")
+
+    store.mark_and_archive_stale(grace_days=30)
+
+    assert store.queue_get(long_stale.id) is None
+
+
+def test_mark_and_archive_stale_keeps_envelope_for_freshly_marked_stale(tmp_path):
+    """A fact that only just turned stale stays in the live registry - its
+    envelope is still awaiting the same review, not silently resolved."""
+    store = MarkdownStore(tmp_path)
+    recently_stale = store.add(_aged("recently stale fact here", days=200))
+    store.enqueue(recently_stale, dest="memory.md", reason="disputed by mem-0002")
+
+    store.mark_and_archive_stale(grace_days=30)
+
+    assert store.get(recently_stale.id).status == Status.stale
+    assert store.queue_get(recently_stale.id) is not None
 
 
 def test_purge_queue_done_respects_window(tmp_path):
@@ -237,6 +285,19 @@ def test_dedup_promoted_respects_project(tmp_path):
 
     assert report["count"] == 0
     assert {m.id for m in store.list()} == {a.id, b.id}
+
+
+def test_dedup_promoted_resolves_queue_envelope(tmp_path):
+    """The archived side of a dedup pair must not leave its envelope orphaned."""
+    store = MarkdownStore(tmp_path)
+    fact = "prefers pnpm over npm for node projects"
+    store.add(Memory(fact=fact, status=Status.promoted, confidence=0.9))
+    low = store.add(Memory(fact=fact, status=Status.promoted, confidence=0.6))
+    store.enqueue(low, dest="memory.md", reason="needs review")
+
+    store.dedup_promoted()
+
+    assert store.queue_get(low.id) is None
 
 
 def test_compaction_aborts_on_malformed_registry(tmp_path):

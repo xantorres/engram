@@ -36,25 +36,33 @@ def pending_reviews(store: Store) -> list[dict]:
     act on; the envelope contributes its dest and reason. An envelope whose fact
     has since been compacted into the archive keeps its row, flagged ``orphan``
     and carrying the frozen snapshot, since nothing else would ever show it again.
+
+    Both reads run under one lock: a writer completing between an unlocked
+    queue_list() and an unlocked list() could join a fresh envelope set against
+    a stale registry snapshot (or vice versa), surfacing a row that no longer
+    matches either file on disk.
     """
-    envelopes = {
-        item["memory"]["id"]: item
-        for item in store.queue_list()
-        if isinstance(item.get("memory"), dict) and "id" in item["memory"]
-    }
-    items: list[dict] = []
-    joined: set[str] = set()
-    for memory in store.list():
-        envelope = envelopes.get(memory.id)
-        if envelope is not None:
-            joined.add(memory.id)
-            items.append({**envelope, "memory": memory.as_item(), "envelope": True})
-        elif memory.status in AWAITING_REVIEW:
-            reason = memory.status.value
-            items.append({"memory": memory.as_item(), "reason": reason, "envelope": False})
-    for memory_id, envelope in envelopes.items():
-        if memory_id not in joined:
-            items.append({**envelope, "envelope": True, "orphan": True})
+    root = getattr(store, "root", None)
+    lock = store_lock(root) if root is not None else contextlib.nullcontext()
+    with lock:
+        envelopes = {
+            item["memory"]["id"]: item
+            for item in store.queue_list()
+            if isinstance(item.get("memory"), dict) and "id" in item["memory"]
+        }
+        items: list[dict] = []
+        joined: set[str] = set()
+        for memory in store.list():
+            envelope = envelopes.get(memory.id)
+            if envelope is not None:
+                joined.add(memory.id)
+                items.append({**envelope, "memory": memory.as_item(), "envelope": True})
+            elif memory.status in AWAITING_REVIEW:
+                reason = memory.status.value
+                items.append({"memory": memory.as_item(), "reason": reason, "envelope": False})
+        for memory_id, envelope in envelopes.items():
+            if memory_id not in joined:
+                items.append({**envelope, "envelope": True, "orphan": True})
     return items
 
 

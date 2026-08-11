@@ -88,6 +88,18 @@ def test_plan_skips_duplicates(tmp_path):
     assert bridge.plan(store).routes[0].action == "skip"
 
 
+def test_plan_skips_envelope_whose_memory_lacks_id(tmp_path):
+    """A ``memory`` dict present but missing ``id`` must not blow up already_filed."""
+    store = _store_with(tmp_path, Memory(fact="prefers pnpm", kind=Kind.tooling))
+    queue_dir = tmp_path / "queue"
+    queue_dir.mkdir(exist_ok=True)
+    (queue_dir / "malformed.json").write_text(json.dumps({"memory": {"fact": "no id here"}}))
+
+    result = bridge.plan(store)
+
+    assert [r.memory.fact for r in result.routes] == ["prefers pnpm"]
+
+
 def test_dry_run_changes_nothing(tmp_path):
     store = _store_with(tmp_path, Memory(fact="prefers pnpm", kind=Kind.tooling))
     bridge.apply(store, bridge.plan(store), autopromote=False)
@@ -237,7 +249,9 @@ def test_pending_reviews_surfaces_dispute_envelope_on_promoted(tmp_path):
     assert by_id[old.id]["reason"] == envelope["reason"]
 
 
-def test_pending_reviews_skips_malformed_envelope(tmp_path):
+def test_pending_reviews_skips_envelope_missing_memory_field(tmp_path):
+    """An envelope with no ``memory`` field at all - distinct from corrupt JSON,
+    which raises StoreFormatError and is covered separately in test_store.py."""
     store = _store_with(tmp_path, Memory(fact="prefers pnpm", kind=Kind.tooling))
     normal = store.list()[0]
 
@@ -251,16 +265,24 @@ def test_pending_reviews_skips_malformed_envelope(tmp_path):
 
 
 def test_pending_reviews_keeps_an_envelope_whose_fact_left_the_registry(tmp_path):
-    """gc compacting a fact out of memory.md must not erase its pending review."""
-    store = MarkdownStore(tmp_path)
-    memory = store.add(Memory(fact="VAT is 12345678X", kind=Kind.fiscal, status=Status.rejected))
-    store.enqueue(memory, dest="memory.md", reason="curated kind needs review")
-    store.archive_rejected()
+    """An envelope with no matching registry entry still surfaces for review
+    instead of vanishing silently - e.g. a memory hand-removed from memory.md.
 
-    assert store.get(memory.id) is None
-    assert store.queue_get(memory.id) is not None
+    Archival itself (archive_rejected, mark_and_archive_stale, dedup_promoted)
+    now resolves the envelope of every memory it moves out of the registry, so
+    it can no longer manufacture this state; this exercises the id-mismatch
+    case directly instead.
+    """
+    store = MarkdownStore(tmp_path)
+    orphaned = Memory(
+        id="mem-0001", fact="VAT is 12345678X", kind=Kind.fiscal, status=Status.rejected
+    )
+    store.enqueue(orphaned, dest="memory.md", reason="curated kind needs review")
+
+    assert store.get(orphaned.id) is None
+    assert store.queue_get(orphaned.id) is not None
     items = review.pending_reviews(store)
-    assert [item["memory"]["id"] for item in items] == [memory.id]
+    assert [item["memory"]["id"] for item in items] == [orphaned.id]
     assert items[0]["orphan"] is True
 
 
@@ -273,3 +295,72 @@ def test_enveloped_row_shows_the_registry_fact_not_the_queued_snapshot(tmp_path)
 
     items = review.pending_reviews(store)
     assert [item["memory"]["fact"] for item in items] == ["prefers bun"]
+
+
+def test_pending_reviews_preserves_registry_order(tmp_path):
+    """Emitted order must track the registry, not group by envelope or reverse it."""
+    store = MarkdownStore(tmp_path)
+    a = store.add(Memory(fact="a pending fact", kind=Kind.tooling))
+    b = store.add(Memory(fact="b pending fact", kind=Kind.fiscal))
+    store.enqueue(b, dest="memory.md", reason="needs review")
+    c = store.add(Memory(fact="c pending fact", kind=Kind.tooling))
+    d = store.add(Memory(fact="d pending fact", kind=Kind.fiscal))
+    store.enqueue(d, dest="memory.md", reason="needs review")
+
+    items = review.pending_reviews(store)
+
+    assert [item["memory"]["id"] for item in items] == [a.id, b.id, c.id, d.id]
+
+
+def test_pending_reviews_skips_envelope_whose_memory_lacks_id(tmp_path):
+    """A ``memory`` dict present but missing ``id`` must be skipped, not raise."""
+    store = _store_with(tmp_path, Memory(fact="prefers pnpm", kind=Kind.tooling))
+    normal = store.list()[0]
+
+    queue_dir = tmp_path / "queue"
+    queue_dir.mkdir(exist_ok=True)
+    (queue_dir / "malformed.json").write_text(
+        json.dumps({"memory": {"fact": "no id here"}, "reason": "junk"})
+    )
+
+    items = review.pending_reviews(store)
+
+    assert [item["memory"]["id"] for item in items] == [normal.id]
+
+
+def test_pending_reviews_holds_the_lock_across_both_reads(tmp_path, monkeypatch):
+    """queue_list() and store.list() must be read under one lock hold - a writer
+    that completes between the two reads must not be able to produce a stale join.
+
+    A full in-process approve() between the reads would exercise the race
+    directly, but re-enters store_lock's RLock on the same thread and cannot
+    prove the *absence* of a matching flock the way it would across processes.
+    Instead this asserts structurally that the lock is held (depth == 1, this
+    thread's reentrancy counter for the store's root) at the moment of each
+    read - the observable that changes from 0 to 1 when the fix wraps both
+    reads in a single ``with store_lock(store.root):`` block.
+    """
+    from engram.core import locking
+
+    store = MarkdownStore(tmp_path)
+    store.add(Memory(fact="prefers pnpm", kind=Kind.tooling))
+    root_lock = locking._root_lock(str(store.root.resolve()))
+
+    depths_during_read: list[int] = []
+    orig_queue_list = store.queue_list
+    orig_list = store.list
+
+    def spy_queue_list(*args, **kwargs):
+        depths_during_read.append(root_lock.depth)
+        return orig_queue_list(*args, **kwargs)
+
+    def spy_list(*args, **kwargs):
+        depths_during_read.append(root_lock.depth)
+        return orig_list(*args, **kwargs)
+
+    monkeypatch.setattr(store, "queue_list", spy_queue_list)
+    monkeypatch.setattr(store, "list", spy_list)
+
+    review.pending_reviews(store)
+
+    assert depths_during_read == [1, 1]

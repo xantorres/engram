@@ -164,6 +164,30 @@ def test_a_decided_fact_never_keeps_a_live_queue_entry(tmp_path):
     assert store.get(known.id).status == Status.promoted
 
 
+def test_forget_resolves_a_live_dispute_envelope(tmp_path):
+    """forget() marks a promoted fact rejected; the queue write must land with
+    it, or the envelope survives and keeps resurfacing the fact's stale
+    pre-forget snapshot in review after it is gone from recall."""
+    from engram.capture.active import stage
+
+    store = MarkdownStore(tmp_path)
+    old = store.add(
+        Memory(
+            fact="The user prefers TypeScript for all new backend services.",
+            status=Status.promoted,
+            last_verified=dt.date.today(),
+        )
+    )
+    stage(store, "TypeScript was uninstalled from the machine.", retire=False)
+    assert store.queue_get(old.id) is not None  # sanity: the dispute filed an envelope
+
+    result = review.forget(store, old.id)
+
+    assert result["ok"]
+    assert store.queue_get(old.id) is None
+    assert all(item["memory"]["id"] != old.id for item in review.pending_reviews(store))
+
+
 def test_an_already_filed_candidate_is_left_for_the_human(tmp_path):
     """Sync must not quietly overturn a decision it already handed to the user."""
     from engram.bridge import promote as bridge

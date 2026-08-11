@@ -88,7 +88,9 @@ def plan(
     # the generic capture-time reason, erasing the specific one that explained
     # why it was escalated. It is already awaiting the same human; leave it be.
     already_filed = {
-        item["memory"]["id"] for item in store.queue_list() if isinstance(item.get("memory"), dict)
+        item["memory"]["id"]
+        for item in store.queue_list()
+        if isinstance(item.get("memory"), dict) and "id" in item["memory"]
     }
     # Drop the filed ones before the limit applies, not after. They stay pending,
     # so they resurface on every run; counting them against the limit spends the
