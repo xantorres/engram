@@ -9,14 +9,15 @@ $ engram recall
 mem-0001  [tooling]  codegraph is my primary code-graph tool
 
 # six weeks later
-$ engram remember "I uninstalled codegraph"
+$ engram remember "I uninstalled codegraph" --kind tooling
 staged mem-0002: [tooling] I uninstalled codegraph
 retired from recall pending review: mem-0001  (engram show <id> to resolve)
 
 $ engram recall
 $ engram queue
 mem-0001  [tooling]  codegraph is my primary code-graph tool  (superseded by mem-0002: 'codegraph' is reported gone, but this fact still asserts it)  [envelope]
-1 awaiting review (1 with envelope)
+mem-0002  [tooling]  I uninstalled codegraph  (pending)
+2 awaiting review (1 with envelope)
 ```
 
 Storing facts is the easy half. The half nobody does is noticing when a stored fact stops being true. The old fact isn't deleted — it drops out of recall and waits for you to rule on it.
