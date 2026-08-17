@@ -22,6 +22,12 @@ NEW_PRIMARY = (
     "Code-graph tooling: codebase-memory is the sole code-graph layer, "
     "replacing codegraph as of 2026-07-28."
 )
+# The harvested duplicate that retired 151 reviewed facts: it reports a removal,
+# but the thing removed is punctuation, not any of the preferences it retired.
+DASH_PREFERENCE = (
+    "The user prefers strict formatting consistency, specifically the removal "
+    "of em/en dashes from documentation."
+)
 
 
 def _promoted(fact: str, **kw) -> Memory:
@@ -93,6 +99,43 @@ def test_a_removal_needs_a_shared_subject_too():
         supersede.contradicts(
             "The user uninstalled codegraph this morning",
             "The user's package manager is pnpm",
+        )
+        is None
+    )
+
+
+def test_a_removal_is_about_the_thing_it_names():
+    """The removal clause is the claim; the rest of the sentence is context.
+
+    A preference that mentions removing punctuation from documents says nothing
+    about how the user likes their documents formatted, and must not retire the
+    fact that says so.
+    """
+    assert (
+        supersede.contradicts(
+            DASH_PREFERENCE,
+            "The user prefers strict formatting in every document they write.",
+        )
+        is None
+    )
+
+
+def test_a_removal_does_not_retire_everything_phrased_the_same_way():
+    """The failure that emptied recall: one word of shared frame read as a subject."""
+    for victim in (
+        "The user prefers a clean git history with no merge commits.",
+        "The user prefers reviewers to be strict about test coverage.",
+        "The user prefers terse, fragment-style prose in conversation.",
+    ):
+        assert supersede.contradicts(DASH_PREFERENCE, victim) is None, victim
+
+
+def test_two_preferences_need_a_shared_subject_to_claim_one_role():
+    """Both say "prefers" and both name a default. Neither is about the other."""
+    assert (
+        supersede.contradicts(
+            "User prefers autopromote to be explicitly controlled (currently false).",
+            "User prefers the xhigh effort level as the default setting.",
         )
         is None
     )

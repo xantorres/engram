@@ -51,6 +51,34 @@ _REMOVAL = re.compile(
     r"|decommissioned|no\s+longer|not\s+installed|gone)\b"
 )
 
+# A sentence states more than one thing. "prefers strict formatting, specifically
+# the removal of em dashes" reports a removal of punctuation and a preference
+# about formatting, and only the first is a claim that anything is gone. Reading
+# the signal against its own clause is what keeps the removal about what it
+# names rather than about every word standing near it.
+_CLAUSE = re.compile(r"[,;:]")
+
+
+def _clauses(text: str, signal: re.Pattern[str]) -> list[str]:
+    """The parts of ``text`` that carry ``signal`` - where its claim is made."""
+    return [part for part in _CLAUSE.split(text) if signal.search(part)]
+
+
+def _shared_subject(a: str, b: str) -> str | None:
+    """The subject both texts name, or ``None`` if they only share a frame.
+
+    One shared word is enough when it is distinctive; anything shorter has to be
+    corroborated, because a short word is common enough to be coincidence.
+    """
+    shared = dedup.subject_tokens(a) & dedup.subject_tokens(b)
+    if not shared:
+        return None
+    longest = max(shared, key=len)
+    if len(longest) >= dedup.MIN_ANCHOR_LEN or len(shared) > 1:
+        return longest
+    return None
+
+
 def contradicts(
     new_fact: str,
     old_fact: str,
@@ -60,22 +88,26 @@ def contradicts(
     """Why ``new_fact`` retires ``old_fact``, or ``None`` if they can coexist.
 
     ``judge`` is consulted only once every lexical rule has declined. Those rules
-    require a distinctive shared word, so a pair that disagrees in meaning while
-    sharing almost no wording reaches here as a false negative; the model is the
-    only thing that can see it. Absent or unreachable, the lexical answer stands.
+    require a shared subject, so a pair that disagrees in meaning while sharing
+    almost no wording reaches here as a false negative; the model is the only
+    thing that can see it. Absent or unreachable, the lexical answer stands.
     """
     verdict = dedup.compare(new_fact, old_fact)
     if verdict == "duplicate":
         return None
     if verdict == "conflict":
         return "the same subject carries a different value"
-    anchor = dedup.shared_anchor(new_fact, old_fact)
-    if anchor is None:
-        return semantic.consult(new_fact, old_fact, judge=judge)
-    if _REMOVAL.search(new_fact):
-        return f"{anchor!r} is reported gone, but this fact still asserts it"
-    if _EXCLUSIVE.search(new_fact) and _EXCLUSIVE.search(old_fact):
-        return f"both claim an exclusive role for {anchor!r}"
+    for clause in _clauses(new_fact, _REMOVAL):
+        # The whole old fact is fair game here: one that merely *mentions* a
+        # thing reported gone is already wrong, wherever it mentions it.
+        subject = _shared_subject(clause, old_fact)
+        if subject is not None:
+            return f"{subject!r} is reported gone, but this fact still asserts it"
+    for clause in _clauses(new_fact, _EXCLUSIVE):
+        for held in _clauses(old_fact, _EXCLUSIVE):
+            subject = _shared_subject(clause, held)
+            if subject is not None:
+                return f"both claim an exclusive role for {subject!r}"
     return semantic.consult(new_fact, old_fact, judge=judge)
 
 
