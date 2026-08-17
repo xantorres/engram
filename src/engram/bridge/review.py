@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+from collections.abc import Callable
 
-from engram.core import atomic, screen
+from engram.core import atomic, screen, supersede
 from engram.core.locking import store_lock
 from engram.core.schema import Memory, Status
 from engram.core.store import MarkdownStore, Store
@@ -94,7 +95,14 @@ def _awaiting(store: Store, memory_id: str) -> tuple[Memory, str] | dict:
     return memory, dest
 
 
-def approve(store: Store, memory_id: str, *, confirm: bool, today: dt.date | None = None) -> dict:
+def approve(
+    store: Store,
+    memory_id: str,
+    *,
+    confirm: bool,
+    today: dt.date | None = None,
+    judge: Callable[[str, str], str | None] | None = None,
+) -> dict:
     if not confirm:
         return {"ok": False, "error": "tier-3 write requires confirmation (pass --confirm)"}
     root = getattr(store, "root", None)
@@ -142,15 +150,78 @@ def approve(store: Store, memory_id: str, *, confirm: bool, today: dt.date | Non
                     "created": False,
                 },
             )
+        # Promotion is the moment a fact gains the standing to retire another,
+        # so this is where a contradiction found at capture is finally acted on.
+        # Re-assessed rather than replayed: the proposal was written against a
+        # store that has since moved, and the fact itself may have been edited.
+        verdict = supersede.apply(store, memory, judge=judge, today=today)
+
         # The capture screen is the only credential control in the system, and a
         # fact can reach here without having passed it (staged before the screen
         # existed, forced through, or hand-added to the registry). Re-check at the
         # one point a human is looking, and say so rather than silently allowing.
         warning = screen.sensitivity(memory.fact)
-        result = {"ok": True, "id": memory.id}
+        result = {"ok": True, "id": memory.id, "superseded": verdict.ids}
+        if verdict.anomaly:
+            result["anomaly"] = verdict.anomaly
         if warning:
             result["warning"] = f"this fact {warning}"
         return result
+
+
+def restore(store: Store, memory_id: str, *, superseder: str | None = None) -> dict:
+    """Put a superseded fact back in recall and forget that it was retired.
+
+    The reverse of :func:`engram.core.supersede.apply`, and the reason that
+    function records who retired what: undoing a wrong retirement is a two-line
+    edit here instead of an afternoon in a YAML file. The envelope goes too - it
+    explains a retirement that no longer happened, and a surviving one would
+    keep re-listing a fact that is back in recall.
+
+    ``last_verified`` is deliberately untouched. The fact was verified when it
+    was verified; a mistaken retirement is not a re-verification.
+    """
+    root = getattr(store, "root", None)
+    lock = store_lock(root) if root is not None else contextlib.nullcontext()
+    with lock:
+        memory = store.get(memory_id)
+        if memory is None:
+            return {"ok": False, "error": f"no memory {memory_id}"}
+        if memory.status != Status.superseded:
+            return {
+                "ok": False,
+                "error": f"memory {memory_id} is not superseded (status={memory.status.value})",
+            }
+        if superseder is not None and memory.superseded_by != superseder:
+            return {"ok": False, "error": f"memory {memory_id} was not superseded by {superseder}"}
+        store.update(
+            memory.model_copy(
+                update={
+                    "status": Status.promoted,
+                    "superseded_by": None,
+                    "superseded_at": None,
+                    "superseded_reason": None,
+                }
+            )
+        )
+        store.resolve_queue(memory_id)
+        return {"ok": True, "id": memory_id, "superseded_by": memory.superseded_by}
+
+
+def restore_by(store: Store, superseder_id: str) -> dict:
+    """Restore every fact one superseder retired - the undo for a bad sweep."""
+    root = getattr(store, "root", None)
+    lock = store_lock(root) if root is not None else contextlib.nullcontext()
+    with lock:
+        victims = [m.id for m in store.list() if m.superseded_by == superseder_id]
+        if not victims:
+            return {"ok": False, "error": f"nothing was superseded by {superseder_id}"}
+        restored = [
+            memory_id
+            for memory_id in victims
+            if restore(store, memory_id, superseder=superseder_id)["ok"]
+        ]
+        return {"ok": True, "restored": restored, "superseded_by": superseder_id}
 
 
 def reject(store: Store, memory_id: str, *, reason: str = "") -> dict:

@@ -80,7 +80,7 @@ def import_markdown_dir(
         )
         staged.append(memory)
         existing.append(memory)
-        supersede.flag_contradicted(store, memory)
+        supersede.propose(store, memory)
     return staged
 
 

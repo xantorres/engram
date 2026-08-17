@@ -47,17 +47,17 @@ def remember(fact: str, kind: str = "preference", confidence: float = 0.6) -> st
     from engram.capture.active import stage
 
     try:
-        # retire=False: an agent proposes, a human disposes. A contradiction
-        # captured here is filed for review, never applied - otherwise recall()
-        # plus one remember() would be an erasure primitive for any agent that
-        # read a malicious instruction.
+        # An agent proposes, a human disposes. A contradiction captured here is
+        # filed for review, never applied - otherwise recall() plus one
+        # remember() would be an erasure primitive for any agent that read a
+        # malicious instruction. Capture cannot retire anything, whoever calls
+        # it, so nothing here has to ask for that.
         config = load_config()
         result = stage(
             _store_for(config),
             fact,
             kind=_kind(kind),
             confidence=confidence,
-            retire=False,
             judge=judge_for(config),
         )
     except CaptureRefused as e:  # pragma: no cover - stage() reports, never raises

@@ -273,21 +273,19 @@ def test_queue_lists_unenveloped_pending_with_marker(tmp_path, monkeypatch):
 
 
 def test_queue_shows_dispute_envelope_on_a_promoted_fact(tmp_path, monkeypatch):
-    """A promoted fact under live dispute (the retire=False path) must render
-    with the [envelope] marker, not just be visible to pending_reviews() itself."""
-    from engram.capture.active import stage
-
+    """A promoted fact under live dispute must render with the [envelope]
+    marker, not just be visible to pending_reviews() itself."""
     store_dir = tmp_path / "store"
     monkeypatch.setenv("ENGRAM_STORE", str(store_dir))
     store = MarkdownStore(store_dir)
-    store.add(
+    disputed = store.add(
         Memory(
             fact="The user prefers TypeScript for all new backend services.",
             status=Status.promoted,
             last_verified=dt.date.today(),
         )
     )
-    stage(store, "TypeScript was uninstalled from the machine.", retire=False)
+    store.enqueue(disputed, dest="memory.md", reason="disputed by mem-9999: reported gone")
 
     result = runner.invoke(app, ["queue"])
 

@@ -64,10 +64,22 @@ class Memory(BaseModel):
     risk_tier: int = Field(default=1, ge=1, le=3)
     dest: str | None = None
     project: str | None = None
+    # Who retired this fact, when, and why. Written together with the
+    # ``superseded`` status so the registry alone can answer "why did this leave
+    # recall" - and so ``restore`` can find every fact one superseder took.
+    superseded_by: str | None = None
+    superseded_at: dt.date | None = None
+    superseded_reason: str | None = None
 
     def as_item(self) -> dict:
-        """A JSON-safe dict for the registry frontmatter / JSONL buffers."""
-        return self.model_dump(mode="json")
+        """A JSON-safe dict for the registry frontmatter / JSONL buffers.
+
+        Supersession keys are omitted while unset: they apply to a handful of
+        facts, and writing three empty lines onto every other one buys nothing
+        but a longer file to read and hand-edit.
+        """
+        item = self.model_dump(mode="json")
+        return {k: v for k, v in item.items() if not (k.startswith("superseded_") and v is None)}
 
     @classmethod
     def from_item(cls, item: dict) -> Memory:

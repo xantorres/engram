@@ -57,7 +57,7 @@ def harvest_session(
     """Harvest and stage facts from a single transcript session.
 
     Returns a dict with keys: memories, staged, skipped_dupe, skipped_trivial,
-    skipped_sensitive, superseded.
+    skipped_sensitive, disputed.
     """
     path = Path(path)
     reader = _READERS.get(harness)
@@ -78,7 +78,7 @@ def harvest_session(
     existing = store.list()
 
     staged: list[Memory] = []
-    superseded: list[str] = []
+    disputed: list[str] = []
     skipped = {"duplicate": 0, "trivial": 0, "sensitive": 0}
 
     for candidate in candidates:
@@ -89,7 +89,7 @@ def harvest_session(
         mem = store.add(candidate.model_copy(update={"project": project}))
         staged.append(mem)
         existing.append(mem)
-        superseded.extend(supersede.flag_contradicted(store, mem, judge=judge))
+        disputed.extend(supersede.propose(store, mem, judge=judge).ids)
 
     return {
         "memories": staged,
@@ -97,5 +97,5 @@ def harvest_session(
         "skipped_dupe": skipped["duplicate"],
         "skipped_trivial": skipped["trivial"],
         "skipped_sensitive": skipped["sensitive"],
-        "superseded": tuple(superseded),
+        "disputed": tuple(disputed),
     }

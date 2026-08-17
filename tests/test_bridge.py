@@ -222,12 +222,9 @@ def test_pending_reviews_includes_unenveloped_awaiting(tmp_path):
         assert by_id[mid]["reason"] == "pending"
 
 
-def test_pending_reviews_surfaces_dispute_envelope_on_promoted(tmp_path):
-    # A dispute filed via retire=False leaves the older fact promoted (by
-    # design - see flag_contradicted) while filing a live envelope for it.
-    # That envelope must surface it: this is the dispute case, not an orphan.
-    from engram.capture.active import stage
-
+def test_pending_reviews_surfaces_a_live_envelope_on_a_promoted_fact(tmp_path):
+    # An envelope filed against a promoted fact - a dispute a human wants to
+    # look at - must surface it. This is the dispute case, not an orphan.
     store = MarkdownStore(tmp_path)
     old = store.add(
         Memory(
@@ -236,9 +233,7 @@ def test_pending_reviews_surfaces_dispute_envelope_on_promoted(tmp_path):
             last_verified=dt.date.today(),
         )
     )
-
-    result = stage(store, "TypeScript was uninstalled from the machine.", retire=False)
-    assert result.disputed == (old.id,)
+    store.enqueue(old, dest="memory.md", reason="disputed by mem-9999: reported gone")
 
     envelope = store.queue_get(old.id)
     by_id = {item["memory"]["id"]: item for item in review.pending_reviews(store)}

@@ -95,11 +95,13 @@ def remember(
 
     mem = result.memory
     typer.echo(f"staged {mem.id}: [{mem.kind.value}] {mem.fact}")
-    if result.superseded:
+    if result.disputed:
         typer.echo(
-            f"retired from recall pending review: {', '.join(result.superseded)}  "
-            f"(engram show <id> to resolve)"
+            f"if promoted, would supersede: {', '.join(result.disputed)}  "
+            f"(engram show {mem.id})"
         )
+    if result.anomaly:
+        typer.echo(f"held back: {result.anomaly}")
 
 
 @app.command(name="list")
@@ -134,10 +136,10 @@ def harvest(
         f"(skipped dupe={result['skipped_dupe']} trivial={result['skipped_trivial']} "
         f"sensitive={result['skipped_sensitive']})"
     )
-    if result["superseded"]:
+    if result["disputed"]:
         typer.echo(
-            f"retired from recall pending review: {', '.join(result['superseded'])}  "
-            f"(engram show <id> to resolve)"
+            f"contradicts {', '.join(result['disputed'])}, still in recall until the "
+            f"newcomer is promoted  (engram queue)"
         )
 
 
@@ -266,27 +268,37 @@ def queue() -> None:
 
 @app.command()
 def show(memory_id: str) -> None:
-    """Show a memory awaiting review and its proposed change."""
+    """Show a memory, why it is awaiting review, and what retired it if anything."""
     store = _store()
     item = store.queue_get(memory_id)
-    if item is not None:
+    memory = store.get(memory_id)
+    if memory is None and item is None:
+        typer.echo(f"no memory {memory_id}")
+        raise typer.Exit(1)
+    if memory is not None:
+        typer.echo(
+            f"{memory.id} [{memory.status.value}/{memory.kind.value}] "
+            f"conf={memory.confidence}\n{memory.fact}"
+        )
+        if memory.superseded_by:
+            # Read back, never recomputed: the rules may have changed since, and
+            # what the user needs to see is the call that was actually made.
+            typer.echo(
+                f"\nsuperseded by {memory.superseded_by} on {memory.superseded_at}: "
+                f"{memory.superseded_reason}"
+            )
+    else:
         mem = item["memory"]
         typer.echo(
             f"{mem['id']} [{mem['status']}/{mem['kind']}] conf={mem['confidence']}\n{mem['fact']}"
+            "\n(no longer in the registry; showing the queued snapshot)"
         )
-        if item.get("reason"):
-            typer.echo(f"\nreason: {item['reason']}")
-        if item.get("diff"):
-            typer.echo("\n" + item["diff"])
+    if item is None:
         return
-    memory = store.get(memory_id)
-    if memory is None:
-        typer.echo(f"no memory {memory_id}")
-        raise typer.Exit(1)
-    typer.echo(
-        f"{memory.id} [{memory.status.value}/{memory.kind.value}] "
-        f"conf={memory.confidence}\n{memory.fact}"
-    )
+    if item.get("reason"):
+        typer.echo(f"\nreason: {item['reason']}")
+    if item.get("diff"):
+        typer.echo("\n" + item["diff"])
 
 
 @app.command()
@@ -303,13 +315,43 @@ def promote(memory_id: str, confirm: bool = typer.Option(False, "--confirm")) ->
         typer.echo(f"{memory.id} [{memory.status.value}/{memory.kind.value}] {memory.fact}")
 
 
-    result = review.approve(store, memory_id, confirm=confirm)
+    result = review.approve(store, memory_id, confirm=confirm, judge=_judge_for(config))
     if not result["ok"]:
         typer.echo(result["error"])
         raise typer.Exit(1)
     if result.get("warning"):
         typer.echo(f"warning: {result['warning']}")
     typer.echo(f"promoted {result['id']}")
+    if result["superseded"]:
+        typer.echo(
+            f"retired from recall pending review: {', '.join(result['superseded'])}  "
+            f"(engram restore --by {result['id']} to undo)"
+        )
+    if result.get("anomaly"):
+        typer.echo(f"held back: {result['anomaly']}  (engram doctor)")
+    _auto_refresh(config, store)
+
+
+@app.command()
+def restore(
+    memory_id: str = typer.Argument(None),
+    by: str = typer.Option(None, "--by", help="Restore everything this fact superseded."),
+) -> None:
+    """Put a superseded fact back in recall, undoing a retirement."""
+    from engram.bridge import review
+
+    if (memory_id is None) == (by is None):
+        typer.echo("pass a memory id or --by <superseder id>, not both", err=True)
+        raise typer.Exit(2)
+
+    config = load_config()
+    store = _store_for(config)
+    result = review.restore_by(store, by) if by else review.restore(store, memory_id)
+    if not result["ok"]:
+        typer.echo(result["error"])
+        raise typer.Exit(1)
+    restored = result.get("restored") or [result["id"]]
+    typer.echo(f"restored to recall: {', '.join(restored)}")
     _auto_refresh(config, store)
 
 

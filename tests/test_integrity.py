@@ -42,11 +42,11 @@ def test_supersede_rolls_back_when_the_queue_write_fails(tmp_path, monkeypatch):
             last_verified=dt.date.today(),
         )
     )
-    new = store.add(Memory(fact=NEW_PRIMARY, kind=Kind.tooling))
+    new = store.add(Memory(fact=NEW_PRIMARY, kind=Kind.tooling, status=Status.promoted))
 
     monkeypatch.setattr(store, "enqueue", _boom)
     with pytest.raises(OSError):
-        supersede.flag_contradicted(store, new)
+        supersede.apply(store, new)
 
     # Registry unchanged: still promoted, still recallable, still reviewable later.
     assert store.get(old.id).status == Status.promoted
@@ -168,7 +168,6 @@ def test_forget_resolves_a_live_dispute_envelope(tmp_path):
     """forget() marks a promoted fact rejected; the queue write must land with
     it, or the envelope survives and keeps resurfacing the fact's stale
     pre-forget snapshot in review after it is gone from recall."""
-    from engram.capture.active import stage
 
     store = MarkdownStore(tmp_path)
     old = store.add(
@@ -178,8 +177,8 @@ def test_forget_resolves_a_live_dispute_envelope(tmp_path):
             last_verified=dt.date.today(),
         )
     )
-    stage(store, "TypeScript was uninstalled from the machine.", retire=False)
-    assert store.queue_get(old.id) is not None  # sanity: the dispute filed an envelope
+    store.enqueue(old, dest="memory.md", reason="disputed by mem-9999: reported gone")
+    assert store.queue_get(old.id) is not None  # sanity: the dispute has an envelope
 
     result = review.forget(store, old.id)
 
@@ -226,11 +225,12 @@ def test_a_second_sync_does_not_overwrite_the_escalation_reason(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_an_agent_capture_flags_a_contradiction_without_retiring_it(tmp_path):
-    """Retiring is a write on reviewed knowledge; the MCP surface may not do it.
+def test_a_capture_flags_a_contradiction_without_retiring_anything(tmp_path):
+    """Retiring is a write on reviewed knowledge; capture may not do it.
 
     Otherwise `recall` plus one `remember("<noun> was removed")` is a zero-effort
-    erasure primitive for any agent that read a malicious instruction.
+    erasure primitive for any agent that read a malicious instruction - and a
+    harvest of a dozen half-true notes is one for the whole store.
     """
     from engram.capture.active import stage
 
@@ -243,14 +243,16 @@ def test_an_agent_capture_flags_a_contradiction_without_retiring_it(tmp_path):
         )
     )
 
-    result = stage(store, "TypeScript was uninstalled from the machine.", retire=False)
+    result = stage(store, "TypeScript was uninstalled from the machine.")
 
-    assert store.get(old.id).status == Status.promoted, "an agent retired a reviewed fact"
-    assert store.queue_get(old.id) is not None, "the dispute was not surfaced for review"
+    assert store.get(old.id).status == Status.promoted, "capture retired a reviewed fact"
+    assert store.queue_get(old.id) is None, "capture wrote to a reviewed fact's envelope"
     assert result.disputed == (old.id,)
+    assert store.queue_get(result.memory.id) is not None, "the claim was not filed for review"
 
 
-def test_a_human_capture_still_retires(tmp_path):
+def test_promotion_is_what_retires(tmp_path):
+    """The proposal becomes real exactly when a human approves the newcomer."""
     from engram.capture.active import stage
 
     store = MarkdownStore(tmp_path)
@@ -261,11 +263,13 @@ def test_a_human_capture_still_retires(tmp_path):
             last_verified=dt.date.today(),
         )
     )
+    staged = stage(store, "TypeScript was uninstalled from the machine.").memory
 
-    result = stage(store, "TypeScript was uninstalled from the machine.", retire=True)
+    result = review.approve(store, staged.id, confirm=True)
 
+    assert result["superseded"] == (old.id,)
     assert store.get(old.id).status == Status.superseded
-    assert result.superseded == (old.id,)
+    assert store.get(old.id).superseded_by == staged.id
 
 
 def test_the_mcp_remember_tool_cannot_retire(tmp_path, monkeypatch):

@@ -59,15 +59,22 @@ def test_cli_remember_reports_an_existing_duplicate(tmp_path, monkeypatch):
     assert "already known" in result.stdout
 
 
-def test_cli_remember_names_what_it_superseded(tmp_path, monkeypatch):
+def test_cli_remember_names_what_it_would_supersede(tmp_path, monkeypatch):
     store = _env(tmp_path, monkeypatch)
-    old = store.add(Memory(fact=OLD_PRIMARY, status=Status.promoted, last_verified=dt.date.today()))
+    old = store.add(
+        Memory(
+            fact=OLD_PRIMARY,
+            kind=Kind.tooling,
+            status=Status.promoted,
+            last_verified=dt.date.today(),
+        )
+    )
 
     result = runner.invoke(app, ["remember", NEW_PRIMARY, "-k", "tooling"])
 
     assert result.exit_code == 0, result.stdout
     assert old.id in result.stdout
-    assert "review" in result.stdout.lower()
+    assert "would supersede" in result.stdout
 
 
 def test_cli_harvest_reports_sensitive_skips(tmp_path, monkeypatch):
@@ -127,9 +134,16 @@ def test_mcp_remember_surfaces_a_refusal_as_a_tool_error(tmp_path, monkeypatch):
     assert store.list() == []
 
 
-def test_mcp_remember_reports_supersession(tmp_path, monkeypatch):
+def test_mcp_remember_reports_a_contradiction(tmp_path, monkeypatch):
     store = _env(tmp_path, monkeypatch)
-    old = store.add(Memory(fact=OLD_PRIMARY, status=Status.promoted, last_verified=dt.date.today()))
+    old = store.add(
+        Memory(
+            fact=OLD_PRIMARY,
+            kind=Kind.tooling,
+            status=Status.promoted,
+            last_verified=dt.date.today(),
+        )
+    )
 
     message = _mcp_remember(fact=NEW_PRIMARY, kind=Kind.tooling.value)
 

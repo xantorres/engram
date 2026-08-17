@@ -31,10 +31,10 @@ class CaptureResult:
     reason: str = ""
     category: str = ""
     duplicate_of: str | None = None
-    #: Facts this one retired outright - only ever set for a trusted capture.
-    superseded: tuple[str, ...] = ()
-    #: Facts this one contradicts but was not allowed to retire; filed for review.
+    #: Facts this one contradicts. Capture never retires them - see supersede.
     disputed: tuple[str, ...] = ()
+    #: Set when the contradiction is too large to believe; nothing was proposed.
+    anomaly: str = ""
 
 
 class CaptureRefused(RuntimeError):
@@ -53,27 +53,24 @@ def stage(
     confidence: float = 0.6,
     source: str = "tool:remember",
     force: bool = False,
-    retire: bool = True,
     judge: Callable[[str, str], str | None] | None = None,
 ) -> CaptureResult:
-    """Screen, stage, and deal with whatever the new fact contradicts.
+    """Screen, stage, and file whatever the new fact contradicts.
 
     ``force`` overrides the duplicate screen. It also overrides the credential
     screen, but such a fact is staged at tier 3 so it can never auto-promote:
     the user may decide engram is the right home for it, and still has to say so
     a second time at review.
 
-    ``retire`` says whether this caller is trusted to drop a contradicted fact
-    out of recall. Human-invoked capture is; the MCP tool an agent calls is not,
-    and files the contradiction for review instead. This is the same line the
-    rest of engram draws - a human approves writes to reviewed knowledge, an
-    agent proposes them.
+    A contradiction found here is only ever *proposed*. Whoever is capturing -
+    the user at a terminal or an agent through MCP - is staging a fact nobody
+    has reviewed yet, and a fact nobody has reviewed does not get to overrule
+    one somebody did. It becomes real when the newcomer is promoted.
 
-    Screening, staging and retiring run under one lock. They are a single
+    Screening and staging run under one lock. They are a single
     read-modify-write over the registry, and interleaving them with another
     writer would let a fact be judged against a store that no longer exists by
-    the time it is written - or let a retirement overwrite a ``forget`` that
-    landed in between.
+    the time it is written.
     """
     cleaned = clean_fact(fact)
     root = getattr(store, "root", None)
@@ -103,14 +100,8 @@ def stage(
         # Safe to reuse rather than re-parse: the lock is held, so nothing has
         # written since the snapshot was taken.
         promoted = [m for m in known if m.status == Status.promoted]
-        collided = supersede.flag_contradicted(
-            store, memory, promoted=promoted, retire=retire, judge=judge
-        )
-        return CaptureResult(
-            memory=memory,
-            superseded=collided if retire else (),
-            disputed=() if retire else collided,
-        )
+        verdict = supersede.propose(store, memory, promoted=promoted, judge=judge)
+        return CaptureResult(memory=memory, disputed=verdict.ids, anomaly=verdict.anomaly)
 
 
 def remember(
