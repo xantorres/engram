@@ -275,6 +275,7 @@ def show(memory_id: str) -> None:
     if memory is None and item is None:
         typer.echo(f"no memory {memory_id}")
         raise typer.Exit(1)
+    told = ""
     if memory is not None:
         typer.echo(
             f"{memory.id} [{memory.status.value}/{memory.kind.value}] "
@@ -283,9 +284,9 @@ def show(memory_id: str) -> None:
         if memory.superseded_by:
             # Read back, never recomputed: the rules may have changed since, and
             # what the user needs to see is the call that was actually made.
+            told = memory.superseded_reason or ""
             typer.echo(
-                f"\nsuperseded by {memory.superseded_by} on {memory.superseded_at}: "
-                f"{memory.superseded_reason}"
+                f"\nsuperseded by {memory.superseded_by} on {memory.superseded_at}: {told}"
             )
     else:
         mem = item["memory"]
@@ -295,8 +296,11 @@ def show(memory_id: str) -> None:
         )
     if item is None:
         return
-    if item.get("reason"):
-        typer.echo(f"\nreason: {item['reason']}")
+    reason = item.get("reason", "")
+    # The envelope of a retired fact restates the retirement, which the registry
+    # has already said in full. Say the rest.
+    if reason and told not in reason:
+        typer.echo(f"\nreason: {reason}")
     if item.get("diff"):
         typer.echo("\n" + item["diff"])
 

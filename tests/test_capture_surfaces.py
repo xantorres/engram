@@ -148,3 +148,24 @@ def test_mcp_remember_reports_a_contradiction(tmp_path, monkeypatch):
     message = _mcp_remember(fact=NEW_PRIMARY, kind=Kind.tooling.value)
 
     assert old.id in message
+
+
+def test_cli_show_explains_a_retirement_from_the_registry(tmp_path, monkeypatch):
+    """The reason is read back, not recomputed: rules change, decisions do not."""
+    store = _env(tmp_path, monkeypatch)
+    mem = store.add(
+        Memory(
+            fact="uses codegraph as their primary tool",
+            kind=Kind.tooling,
+            status=Status.superseded,
+            superseded_by="mem-9999",
+            superseded_at=dt.date(2026, 8, 16),
+            superseded_reason="'codegraph' is reported gone, but this fact still asserts it",
+        )
+    )
+
+    result = runner.invoke(app, ["show", mem.id])
+
+    assert result.exit_code == 0, result.stdout
+    assert "superseded by mem-9999 on 2026-08-16" in result.stdout
+    assert "'codegraph' is reported gone" in result.stdout
