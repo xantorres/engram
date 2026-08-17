@@ -27,6 +27,40 @@ def test_precision_tokens_extracted():
     assert "2026-06-09" in tokens
 
 
+def test_a_word_shouted_in_capitals_is_not_an_identifier():
+    """An identifier carries digits. A capitalised English word is still a word.
+
+    Reading one as a value made every fact about the same repository disagree
+    with every other, because only one of them happened to shout.
+    """
+    assert dedup.precision_tokens("The user is a CODEOWNER for that repository") == set()
+
+
+def test_a_value_on_one_side_only_is_detail_rather_than_disagreement():
+    """Two applications to different companies, one of which records a due date.
+
+    A conflict is the same field answered twice. One fact carrying a date the
+    other never mentions is extra detail, and calling it a contradiction retires
+    a true fact about an unrelated subject.
+    """
+    assert (
+        dedup.compare(
+            "User has a pending application (app #77) with micro1 due 2026-06-23.",
+            "User has a pending application (app #95) with AlphaSights.",
+        )
+        != "conflict"
+    )
+
+
+def test_frame_words_never_count_as_a_shared_subject():
+    """Every fact in a personal store says "the user prefers"; none of it is a subject."""
+    assert dedup.subject_tokens("The user prefers using pnpm") == {"pnpm"}
+
+
+def test_subject_tokens_keep_the_thing_the_fact_is_about():
+    assert {"codegraph", "layer"} <= dedup.subject_tokens("The user's code-graph layer")
+
+
 # ---------------------------------------------------------------------------
 # Compound identifiers
 #

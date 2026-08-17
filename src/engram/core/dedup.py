@@ -15,7 +15,11 @@ _PRECISION_PATTERNS = [
     re.compile(r"\b\d{4}-\d{2}-\d{2}\b"),  # ISO date
     re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b"),  # IBAN-ish
     re.compile(r"\b\d+[.,]\d{2}\b"),  # money
-    re.compile(r"\b[A-Z0-9]{7,}\b"),  # identifiers (TIC/VAT/passport/...)
+    # Identifiers (TIC/VAT/passport/...). A digit is required: an identifier
+    # carries a value, while a run of capitals with none is just a word being
+    # shouted ("CODEOWNER"), and reading one as a value makes every fact that
+    # mentions the same subject disagree with every other.
+    re.compile(r"\b(?![A-Z]+\b)[A-Z0-9]{7,}\b"),
 ]
 
 _STOPWORDS = frozenset(
@@ -54,6 +58,28 @@ MARKER_TOKENS = frozenset(
         "supersede",
         "supersedes",
         "instead",
+    }
+)
+
+# The vocabulary every fact in a personal store is built from. These words say
+# that a sentence is about the user and what they like; they never say which
+# thing it is about. Two facts agreeing on nothing but these agree on nothing.
+# Stems, because that is what the tokenizer emits.
+FRAME_TOKENS = frozenset(
+    {
+        "user",
+        "prefer",
+        "preferr",
+        "preferenc",
+        "preference",
+        "use",
+        "used",
+        "using",
+        "work",
+        "has",
+        "have",
+        "their",
+        "them",
     }
 )
 
@@ -102,6 +128,11 @@ def salient_tokens(text: str) -> set[str]:
     return out
 
 
+def subject_tokens(text: str) -> set[str]:
+    """The tokens naming what a fact is *about*, with the frame stripped out."""
+    return salient_tokens(text) - FRAME_TOKENS - MARKER_TOKENS
+
+
 def _anchor(ta: set[str], tb: set[str]) -> str | None:
     candidates = [t for t in (ta & tb) - MARKER_TOKENS if len(t) >= MIN_ANCHOR_LEN]
     return max(candidates, key=len) if candidates else None
@@ -129,8 +160,11 @@ def compare(a: str, b: str) -> str:
 
     # The floor guards sameness only. A conflict already rests on two precise
     # values disagreeing, which is evidence in itself - "VAT is 123" against
-    # "VAT is 999" shares little else, and should still be caught.
-    if overlap >= _CONFLICT_OVERLAP and (pa or pb) and pa != pb:
+    # "VAT is 999" shares little else, and should still be caught. Both sides
+    # must carry one: a value the other fact never mentions is added detail, and
+    # two applications to different companies, one of them dated, are not two
+    # answers to the same question.
+    if overlap >= _CONFLICT_OVERLAP and pa and pb and pa != pb:
         return "conflict"
     if overlap >= _DUP_THRESHOLD and shared >= _MIN_SHARED_TOKENS and pa == pb:
         # Agreeing on the frame is not agreeing on the answer. When each fact
