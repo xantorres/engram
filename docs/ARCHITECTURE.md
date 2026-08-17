@@ -35,11 +35,14 @@ capture/ extract/ <- active remember + transcript harvest; pluggable extractor L
   is what proves they are talking about the same thing.
 - **`screen.py`** is the capture gate: it turns away trivia, credentials, and
   facts already in the store before anything is written.
-- **`supersede.py`** decides when a newly captured fact retires one already in
-  recall, on three narrow signals: a diverging value, two facts claiming one
-  exclusive role, and an explicit removal ("uninstalled", "no longer"). The
-  retired fact goes to review, never to the bin, and an agent cannot retire a
-  reviewed fact unilaterally.
+- **`supersede.py`** decides when a fact retires one already in recall, on three
+  narrow signals: a diverging value, two facts claiming one exclusive role, and
+  an explicit removal ("uninstalled", "no longer"). Each is read against the
+  clause that makes the claim and needs a shared *subject*, not a shared frame
+  word. Capture only ever proposes — promotion applies — and a single fact may
+  retire at most `MAX_SUPERSEDES` others; anything larger is held back for
+  `health.doctor` to report. Every retirement records its superseder, when and
+  why, which is what `review.restore()` reverses.
 - **`freshness.py`** parses decay horizons and decides staleness.
 - **`gc.py`** is the retention sweep: prune `.bak`, rotate the audit log and
   delete rotated archives past `gc.audit_archive_keep_days`, archive rejected
@@ -74,8 +77,11 @@ the auto-append path to chosen kinds (conflicts still queue); without it,
 routing falls back to the tier model alone. `promote.apply()` does nothing
 unless `autopromote` is on, so the bridge ships dark and is `--dry-run` by
 default. `review.approve()` is a tier-3 write and is refused without explicit
-confirm. `review.forget()` reverses a promotion: the fact is marked rejected
-through the same atomic path, leaving an audit entry and a working undo token.
+confirm, and is where a proposed supersession is finally applied — the one point
+a human has said the newcomer is true. `review.forget()` reverses a promotion:
+the fact is marked rejected through the same atomic path, leaving an audit entry
+and a working undo token. `review.restore()` reverses a retirement, clearing the
+supersession fields and dropping the envelope that explained it.
 
 ## Recall (`recall/`)
 

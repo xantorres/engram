@@ -11,16 +11,18 @@ mem-0001  [tooling]  codegraph is my primary code-graph tool
 # six weeks later
 $ engram remember "I uninstalled codegraph" --kind tooling
 staged mem-0002: [tooling] I uninstalled codegraph
-retired from recall pending review: mem-0001  (engram show <id> to resolve)
+if promoted, would supersede: mem-0001  (engram show mem-0002)
+
+$ engram promote mem-0002 --confirm
+mem-0002 [pending/tooling] I uninstalled codegraph
+promoted mem-0002
+retired from recall pending review: mem-0001  (engram restore --by mem-0002 to undo)
 
 $ engram recall
-$ engram queue
-mem-0001  [tooling]  codegraph is my primary code-graph tool  (superseded by mem-0002: 'codegraph' is reported gone, but this fact still asserts it)  [envelope]
-mem-0002  [tooling]  I uninstalled codegraph  (pending)
-2 awaiting review (1 with envelope)
+mem-0002  [tooling]  I uninstalled codegraph
 ```
 
-Storing facts is the easy half. The half nobody does is noticing when a stored fact stops being true. The old fact isn't deleted — it drops out of recall and waits for you to rule on it.
+Storing facts is the easy half. The half nobody does is noticing when a stored fact stops being true. The old fact isn't deleted — it drops out of recall and waits for you to rule on it, and `engram restore` puts it back if the newcomer was wrong.
 
 One local store every agent reads from and writes to — plain Markdown you own, served over the [Model Context Protocol](https://modelcontextprotocol.io). Works with Claude Code, Codex, opencode, and any MCP-capable client.
 
@@ -68,23 +70,25 @@ flowchart LR
 
 **A fact's journey.** Your agent calls `remember("prefers pnpm over npm", tooling)`. Every capture starts as `pending` — staged, not yet true. From there it reaches recall two ways: `engram promote <id> --confirm` approves it on the spot, or `engram sync --apply` walks the backlog and auto-appends the low-risk kinds while routing the sensitive ones to the review queue. `tooling` is low-risk, so `sync` would log it for you; `remember("VAT number is 12345678X", fiscal)` is not, so it waits for an explicit `promote`. Both end up as plain Markdown you can read, `git diff`, and `engram forget`.
 
-**Facts expire, so Engram retires them.** When a new fact contradicts one already in recall — it claims the same exclusive role ("your *primary* editor"), or reports that something is gone — the older fact is marked `superseded`, dropped from recall immediately, and filed for review with the reason. It is never deleted, and the newcomer is not promoted in its place; you decide with `promote` or `reject`. Confidence also decays toward the fact's `decay` horizon, so a freshly confirmed fact outranks an older one that merely sounded more certain.
+**Facts expire, so Engram retires them.** When a new fact contradicts one already in recall — it claims the same exclusive role ("your *primary* editor"), or reports that something is gone — the older fact is marked `superseded`, dropped from recall immediately, and filed for review with the reason. It is never deleted, and it records who retired it, so `engram restore <id>` (or `--by <superseder>` for a whole sweep) puts it straight back. Confidence also decays toward the fact's `decay` horizon, so a freshly confirmed fact outranks an older one that merely sounded more certain.
+
+**Only a fact you approved can retire another.** Capture — `remember`, a `harvest`, an agent's MCP call — never retires anything. It files what the newcomer *would* supersede on the newcomer's own review slip, and promoting it is what applies that. A fact nobody has read does not get to overrule one you did. Two more limits bound the blast radius: a contradiction has to be about the same *subject* (the words a personal store is framed in — "the user prefers…" — are shared by everything and count for nothing), and one fact may retire at most three others unless it explicitly revokes a whole class. Anything larger is held back whole and reported by `engram doctor`, because one fact contradicting a dozen is a broken rule, not a discovery.
 
 ### The lifecycle
 
 | Status | Meaning | How it moves |
 |---|---|---|
 | `pending` | captured, not yet true | `promote --confirm` → `promoted` · `sync --apply` → promoted/queued/rejected · `reject` → `rejected` |
-| `promoted` | live in recall | `forget` or `reject` → `rejected` · contradicted → `superseded` |
-| `superseded` | was live, then contradicted by newer evidence | `promote --confirm` re-verifies it · `reject` retires it |
+| `promoted` | live in recall | `forget` or `reject` → `rejected` · contradicted by a *promoted* fact → `superseded` |
+| `superseded` | was live, then contradicted by newer evidence | `restore` puts it back untouched · `promote --confirm` re-verifies it · `reject` retires it |
 | `stale` | went unconfirmed past its `decay` horizon | `promote --confirm` re-verifies it · `reject` retires it |
 | `rejected` | not in recall; the same wording can be captured again, as a new id | — |
 
 `stale` and `superseded` are deliberately different: the first means time passed, the second means something newer disagreed. A sweep for the merely unconfirmed must not also retire the disputed.
 
-Orthogonal to status, a fact may also have an **envelope** in `queue/` — a review slip carrying the proposed destination and the reason it needs a human. `sync` files one when it escalates a candidate, and so does a contradiction. The envelope is context, never the source of truth: `promote` always reads the fact itself from `memory.md`, so editing the frontmatter of a queued fact does what you'd expect.
+Orthogonal to status, a fact may also have an **envelope** in `queue/` — a review slip carrying the proposed destination and the reason it needs a human. `sync` files one when it escalates a candidate, and so does a contradiction. The envelope is context, never the source of truth: `promote` always reads the fact itself from `memory.md`, so editing the frontmatter of a queued fact does what you'd expect. It is also *derived* from the registry — an envelope is honoured only while the fact's status still matches the one it was filed against, so a restored or hand-edited fact never re-lists with a reason that stopped being true. `gc --queue` clears the ones that have expired.
 
-`promote`, `reject` and `show` all accept an id in any state awaiting your call — `pending`, `stale`, or `superseded`, queued or not. `show` and `reject` will also act on an already-decided fact; `promote` refuses one.
+`promote`, `reject` and `show` all accept an id in any state awaiting your call — `pending`, `stale`, or `superseded`, queued or not. `show` and `reject` will also act on an already-decided fact; `promote` refuses one. `restore` only accepts a `superseded` one, and puts it back exactly as it was: same `last_verified`, no re-verification implied.
 
 ## Where your memory lives
 
@@ -156,6 +160,8 @@ engram remember "I prefer pnpm over npm"    # stage a fact (pending review)
 engram list --status pending                # see what's staged
 engram promote mem-0001 --confirm           # approve one fact outright
 engram recall                               # recall promoted memories
+engram restore mem-0002                     # put a retired fact back in recall
+engram doctor                               # what needs your attention
 engram serve                                # start the MCP server for your agents
 ```
 
