@@ -32,9 +32,31 @@ _LOG_HEADER = "# Memory log\n\nNewest first. Auto-captured, low-risk facts.\n\n"
 _MEM_ID_RE = re.compile(r"^mem-\d+$")
 
 
+_SUPERSEDE_REASON = re.compile(r"^superseded by (mem-\d+): (.+)$", re.DOTALL)
+
+
 def _valid_id(memory_id: str) -> bool:
     """Only generated ``mem-<digits>`` ids may build a queue path - no traversal."""
     return bool(_MEM_ID_RE.match(memory_id))
+
+
+def envelope_is_current(envelope: dict, memory: Memory | None) -> bool:
+    """Whether an envelope still describes the fact the registry holds.
+
+    An envelope freezes the fact as it stood when it was filed, its reason
+    included, and the registry is the truth. Once the two disagree about status
+    the reason describes nothing: a restored fact would keep re-listing as
+    retired, and a rejected one would keep asking to be reviewed.
+
+    A missing fact is the orphan case, kept on purpose - nothing else would ever
+    surface an envelope whose fact has left the registry.
+    """
+    if memory is None:
+        return True
+    snapshot = envelope.get("memory")
+    if not isinstance(snapshot, dict):
+        return True
+    return snapshot.get("status") == memory.status.value
 
 
 class StoreFormatError(RuntimeError):
@@ -390,6 +412,65 @@ class MarkdownStore(Store):
             if updated and not dry_run:
                 self._save(new)
             return {"updated": updated, "count": len(updated)}
+
+    def reconcile_queue(self, *, dry_run: bool = False) -> dict:
+        """Resolve every envelope the registry has moved past.
+
+        The queue is derived from the registry, never the other way round. An
+        envelope left behind by a restored, rejected or re-promoted fact keeps
+        re-listing it with a reason that stopped being true.
+        """
+        with store_lock(self.root):
+            registry = {m.id: m for m in self._load()}
+            stale = sorted(
+                snapshot["id"]
+                for item in self.queue_list()
+                if isinstance(snapshot := item.get("memory"), dict)
+                and "id" in snapshot
+                and not envelope_is_current(item, registry.get(snapshot["id"]))
+            )
+            if not dry_run:
+                for memory_id in stale:
+                    self.resolve_queue(memory_id)
+            return {"resolved": stale, "count": len(stale)}
+
+    def backfill_supersede_links(self, *, dry_run: bool = False) -> dict:
+        """Recover who retired a fact, and why, from its queue envelope.
+
+        Facts retired before the registry recorded any of that carry it only in
+        the envelope, where nothing can act on it: ``restore --by`` and the
+        doctor's mass-retirement check both read the registry. Idempotent - only
+        superseded records still missing the link are touched.
+        """
+        with store_lock(self.root):
+            memories = self._load()
+            updated: list[str] = []
+            recovered: list[Memory] = []
+            for memory in memories:
+                if memory.status == Status.superseded and not memory.superseded_by:
+                    memory = self._link_from_envelope(memory) or memory
+                    if memory.superseded_by:
+                        updated.append(memory.id)
+                recovered.append(memory)
+            if updated and not dry_run:
+                self._save(recovered)
+            return {"updated": updated, "count": len(updated)}
+
+    def _link_from_envelope(self, memory: Memory) -> Memory | None:
+        envelope = self.queue_get(memory.id)
+        match = _SUPERSEDE_REASON.match((envelope or {}).get("reason", ""))
+        if match is None:
+            return None
+        # The envelope was written in the same breath as the retirement, so when
+        # it happened is what its file says.
+        filed = self.queue_dir / f"{memory.id}.json"
+        return memory.model_copy(
+            update={
+                "superseded_by": match.group(1),
+                "superseded_reason": match.group(2),
+                "superseded_at": dt.date.fromtimestamp(filed.stat().st_mtime),
+            }
+        )
 
     def purge_queue_done(self, keep_days: int, *, dry_run: bool = False) -> dict:
         """Hard-delete resolved queue envelopes older than ``keep_days`` (pure cruft)."""

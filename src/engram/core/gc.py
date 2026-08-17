@@ -59,6 +59,7 @@ class GarbageCollector:
             # Backfill first so project scoping informs dedup and conflict checks.
             if options.migrate:
                 report["migrate"] = self.store.backfill_projects(dry_run=dry)
+                report["supersede_links"] = self.store.backfill_supersede_links(dry_run=dry)
             if options.rejected:
                 report["rejected"] = self.store.archive_rejected(dry_run=dry)
             if options.stale:
@@ -68,9 +69,14 @@ class GarbageCollector:
             if options.dedup:
                 report["dedup"] = self.store.dedup_promoted(dry_run=dry)
             if options.queue:
-                report["queue"] = self.store.purge_queue_done(
-                    self.config.queue_done_keep_days, dry_run=dry
-                )
+                # Reconcile before purging: an envelope the registry has moved
+                # past is cruft in the same sense as a resolved one, and leaving
+                # it re-lists a decided fact forever.
+                resolved = self.store.reconcile_queue(dry_run=dry)
+                report["queue"] = {
+                    **self.store.purge_queue_done(self.config.queue_done_keep_days, dry_run=dry),
+                    "resolved": resolved["resolved"],
+                }
             if options.bak:
                 report["bak"] = self._bak(apply)
             if options.audit:

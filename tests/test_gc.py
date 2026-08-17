@@ -132,3 +132,52 @@ def test_gc_bak_dry_run_survives_an_unstattable_snapshot(tmp_path):
         GcOptions(bak=True), apply=False
     )
     assert report["bak"]["pruned"] == 0
+
+
+# ---------------------------------------------------------------------------
+# The queue is derived from the registry
+# ---------------------------------------------------------------------------
+
+
+def test_gc_resolves_an_envelope_the_registry_has_moved_past(tmp_path):
+    """A restored fact must not keep re-listing with the reason that retired it."""
+    from engram.core.schema import Memory, Status
+
+    store = MarkdownStore(tmp_path)
+    mem = store.add(Memory(fact="prefers pnpm", status=Status.superseded))
+    store.enqueue(mem, dest="memory.md", reason="superseded by mem-9999: reported gone")
+    store.update(mem.model_copy(update={"status": Status.promoted}))
+
+    report = GarbageCollector(store, GcConfig()).run(GcOptions(queue=True), apply=True)
+
+    assert report["queue"]["resolved"] == [mem.id]
+    assert store.queue_get(mem.id) is None
+
+
+def test_gc_keeps_an_envelope_that_still_matches_the_registry(tmp_path):
+    from engram.core.schema import Memory, Status
+
+    store = MarkdownStore(tmp_path)
+    mem = store.add(Memory(fact="prefers pnpm", status=Status.pending))
+    store.enqueue(mem, dest="memory.md", reason="preference needs review")
+
+    GarbageCollector(store, GcConfig()).run(GcOptions(queue=True), apply=True)
+
+    assert store.queue_get(mem.id) is not None
+
+
+def test_gc_recovers_a_supersede_link_from_its_envelope(tmp_path):
+    """Facts retired before the registry recorded a superseder are still undoable."""
+    from engram.core.schema import Memory, Status
+
+    store = MarkdownStore(tmp_path)
+    mem = store.add(Memory(fact="uses codegraph", status=Status.superseded))
+    store.enqueue(mem, dest="memory.md", reason="superseded by mem-9999: reported gone")
+
+    report = GarbageCollector(store, GcConfig()).run(GcOptions(migrate=True), apply=True)
+
+    assert report["supersede_links"]["updated"] == [mem.id]
+    recovered = store.get(mem.id)
+    assert recovered.superseded_by == "mem-9999"
+    assert recovered.superseded_reason == "reported gone"
+    assert recovered.superseded_at is not None

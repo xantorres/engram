@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from engram.core import atomic, dedup, tiers
 from engram.core.locking import store_lock
 from engram.core.schema import Memory, Status
-from engram.core.store import MarkdownStore, Store
+from engram.core.store import MarkdownStore, Store, envelope_is_current
 
 
 @dataclass
@@ -81,16 +81,21 @@ def plan(
     still compared against the whole promoted set, so a filtered run can never
     miss a duplicate or a conflict that an unfiltered run would have caught.
     """
-    promoted = store.list(status=Status.promoted)
+    registry = {m.id: m for m in store.list()}
+    promoted = [m for m in registry.values() if m.status == Status.promoted]
     result = PromotionResult()
     # Queueing escalates the tier but leaves the status pending, so an already
     # filed candidate would be re-selected on the next run and re-enqueued with
     # the generic capture-time reason, erasing the specific one that explained
     # why it was escalated. It is already awaiting the same human; leave it be.
+    # An envelope the registry has moved past is not that, and must not hold a
+    # candidate out of the sweep on the strength of a reason that expired.
     already_filed = {
         item["memory"]["id"]
         for item in store.queue_list()
-        if isinstance(item.get("memory"), dict) and "id" in item["memory"]
+        if isinstance(item.get("memory"), dict)
+        and "id" in item["memory"]
+        and envelope_is_current(item, registry.get(item["memory"]["id"]))
     }
     # Drop the filed ones before the limit applies, not after. They stay pending,
     # so they resurface on every run; counting them against the limit spends the
@@ -99,8 +104,8 @@ def plan(
     # silently does no work.
     pending = [
         candidate
-        for candidate in store.list(status=Status.pending)
-        if candidate.id not in already_filed
+        for candidate in registry.values()
+        if candidate.status == Status.pending and candidate.id not in already_filed
     ]
     selected = _select(pending, ids=ids, kinds=kinds, limit=limit)
     for candidate in selected:

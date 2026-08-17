@@ -359,3 +359,39 @@ def test_pending_reviews_holds_the_lock_across_both_reads(tmp_path, monkeypatch)
     review.pending_reviews(store)
 
     assert depths_during_read == [1, 1]
+
+
+def test_pending_reviews_hides_an_envelope_the_registry_has_moved_past(tmp_path):
+    """A fact put back in recall by hand must not keep listing as retired."""
+    store = MarkdownStore(tmp_path)
+    mem = store.add(Memory(fact="prefers pnpm", kind=Kind.tooling, status=Status.superseded))
+    store.enqueue(mem, dest="memory.md", reason="superseded by mem-9999: reported gone")
+    store.update(mem.model_copy(update={"status": Status.promoted}))
+
+    assert review.pending_reviews(store) == []
+
+
+def test_pending_reviews_still_lists_a_fact_whose_envelope_went_stale(tmp_path):
+    """Only the envelope's claim expires; a fact awaiting review keeps its row."""
+    store = MarkdownStore(tmp_path)
+    mem = store.add(Memory(fact="prefers pnpm", kind=Kind.tooling, status=Status.superseded))
+    store.enqueue(mem, dest="memory.md", reason="superseded by mem-9999: reported gone")
+    store.update(mem.model_copy(update={"status": Status.pending}))
+
+    items = review.pending_reviews(store)
+
+    assert [item["memory"]["id"] for item in items] == [mem.id]
+    assert items[0]["envelope"] is False
+    assert items[0]["reason"] == "pending"
+
+
+def test_plan_ignores_an_envelope_the_registry_has_moved_past(tmp_path):
+    """A stale envelope must not hold a candidate out of the sweep forever."""
+    store = MarkdownStore(tmp_path)
+    mem = store.add(Memory(fact="prefers pnpm", kind=Kind.tooling, status=Status.superseded))
+    store.enqueue(mem, dest="memory.md", reason="superseded by mem-9999: reported gone")
+    store.update(mem.model_copy(update={"status": Status.pending}))
+
+    result = bridge.plan(store)
+
+    assert [r.memory.id for r in result.routes] == [mem.id]

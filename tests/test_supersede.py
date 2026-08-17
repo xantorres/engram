@@ -536,6 +536,64 @@ def test_a_superseded_fact_is_not_reported_as_merely_decayed():
     assert doctor([contradicted])["stale"] == []
 
 
+def test_doctor_reports_one_fact_that_retired_many():
+    """The shape of the incident, read straight off the registry."""
+    superseder = Memory(id="mem-0100", fact="dashes were removed", status=Status.promoted)
+    swept = [
+        Memory(
+            id=f"mem-000{n}",
+            fact=f"preference {n}",
+            status=Status.superseded,
+            superseded_by="mem-0100",
+        )
+        for n in range(1, supersede.MAX_SUPERSEDES + 2)
+    ]
+
+    report = doctor([superseder, *swept])
+
+    assert report["mass_supersede"] == [("mem-0100", len(swept))]
+
+
+def test_doctor_reports_a_retirement_no_reviewed_fact_authorised():
+    """Every victim of the incident carries this: retired by a pending fact."""
+    unreviewed = Memory(id="mem-0100", fact="dashes were removed", status=Status.pending)
+    victim = Memory(
+        id="mem-0001", fact="prefers em dashes", status=Status.superseded, superseded_by="mem-0100"
+    )
+
+    report = doctor([unreviewed, victim])
+
+    assert report["unauthorized_supersede"] == [("mem-0001", "mem-0100")]
+
+
+def test_doctor_accepts_a_retirement_a_promoted_fact_authorised():
+    superseder = Memory(id="mem-0100", fact="dashes were removed", status=Status.promoted)
+    victim = Memory(
+        id="mem-0001", fact="prefers em dashes", status=Status.superseded, superseded_by="mem-0100"
+    )
+
+    report = doctor([superseder, victim])
+
+    assert report["unauthorized_supersede"] == []
+    assert report["mass_supersede"] == []
+
+
+def test_doctor_does_not_call_two_different_applications_a_conflict():
+    """Different subjects, one of them dated. Not two answers to one question."""
+    first = Memory(
+        id="mem-0001",
+        fact="User has a pending application (app #77) with micro1 due 2026-06-23.",
+        status=Status.promoted,
+    )
+    second = Memory(
+        id="mem-0002",
+        fact="User has a pending application (app #95) with AlphaSights.",
+        status=Status.promoted,
+    )
+
+    assert doctor([first, second])["conflicts"] == []
+
+
 def test_the_model_can_retire_a_pair_the_lexical_rules_cleared(tmp_path):
     """"Madrid" and "Barcelona" share only "lives" -- no rule here can see it.
 

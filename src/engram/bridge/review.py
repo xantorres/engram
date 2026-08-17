@@ -21,7 +21,7 @@ from collections.abc import Callable
 from engram.core import atomic, screen, supersede
 from engram.core.locking import store_lock
 from engram.core.schema import Memory, Status
-from engram.core.store import MarkdownStore, Store
+from engram.core.store import MarkdownStore, Store, envelope_is_current
 
 AWAITING_REVIEW = (Status.pending, Status.stale, Status.superseded)
 
@@ -57,8 +57,10 @@ def pending_reviews(store: Store) -> list[dict]:
             envelope = envelopes.get(memory.id)
             if envelope is not None:
                 joined.add(memory.id)
-                items.append({**envelope, "memory": memory.as_item(), "envelope": True})
-            elif memory.status in AWAITING_REVIEW:
+                if envelope_is_current(envelope, memory):
+                    items.append({**envelope, "memory": memory.as_item(), "envelope": True})
+                    continue
+            if memory.status in AWAITING_REVIEW:
                 reason = memory.status.value
                 items.append({"memory": memory.as_item(), "reason": reason, "envelope": False})
         for memory_id, envelope in envelopes.items():
