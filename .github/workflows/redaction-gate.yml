@@ -1,0 +1,37 @@
+name: redaction-gate
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: scan history for denylist hits
+        env:
+          PATTERNS_B64: ${{ secrets.RIGOPS_REDACTION_PATTERNS_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PATTERNS_B64:-}" ]; then
+            echo "RIGOPS_REDACTION_PATTERNS_B64 secret is not set"
+            [ "${GITHUB_EVENT_NAME:-}" = pull_request ] && exit 0
+            exit 1
+          fi
+          P="$(mktemp)"
+          printf '%s' "$PATTERNS_B64" | base64 -d > "$P"
+          n=0; bad=0
+          while IFS= read -r rule || [ -n "$rule" ]; do
+            n=$((n + 1))
+            case "$rule" in '' | '#'*) continue ;; esac
+            case "${rule%% *}" in i) g=-Ei ;; s) g=-E ;; *) echo "unparseable rule at line $n"; exit 2 ;; esac
+            pat="${rule#* }"
+            c=$( { git log --all -m -p --no-color --no-ext-diff; git log --all --format='%an %ae %cn %ce%n%B'; git for-each-ref --format='%(refname)'; } | grep -c "$g" -- "$pat" || true)
+            if [ "$c" -gt 0 ]; then echo "rule at line $n: $c hit(s)"; bad=$((bad + c)); fi
+          done < "$P"
+          rm -f "$P"
+          if [ "$bad" -gt 0 ]; then echo "redaction gate: $bad hit(s), matched text withheld"; exit 1; fi
+          echo "redaction gate: clean"
